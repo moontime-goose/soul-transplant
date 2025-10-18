@@ -1,0 +1,33 @@
+config_version: "0.1"
+# Soulseek download directory
+staging_folder: "/some_folder"
+
+# slskd client configuration. No other clients supported
+soulseek_client:
+  type: slskd
+  host: http://slskd_hostname
+  port: 2234
+  # see https://github.com/slskd/slskd/blob/master/docs/config.md#authentication
+  api_key: SOME_API_KEY
+torrent_clients:
+  - type: qBittorrent
+    host: http://qbittorrent_host
+    port: 8080
+    username: USERNAME
+    password: PASSWORD
+    # Optional, if your qbit is running on a remote host
+    prefix_mapping:
+      # Prefix to downloaded folder as visible from host 
+      host: "/host_path"
+      # Prefix to downloaded folder as visible from remote qbittorrent host
+      remote: "/remote_path"
+
+# Search only for lossress results, also possible MP#
+media_format: FLAC
+
+# Where to look for file listing information.
+catalogs:
+  - id: SOME_NAME
+    url: "https://some-gazelle-tracker"
+    type: Gazelle # The only type supported
+    api_key: SOME_API_KEY # consult your tracker's wiki

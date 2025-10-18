@@ -1,0 +1,36 @@
+[project]
+name = "soul-transplant"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.3.0",
+    "frozendict>=2.4.6",
+    "jellyfish>=1.2.1",
+    "pydantic>=2.12.3",
+    "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
+    "pyyaml>=6.0.3",
+    "qbittorrent-api>=2025.7.0",
+    "ratelimit>=2.2.1",
+    "requests>=2.32.5",
+    "requests-cache>=1.2.1",
+    "rich>=14.2.0",
+    "slskd-api>=0.1.5",
+    "torf>=4.3.0",
+    "ty>=0.0.1a23",
+    "types-pyyaml>=6.0.12.20250915",
+    "xdg-base-dirs>=6.0.2",
+]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+
+[tool.black]
+line-length = 100
+
+[tool.isort]
+line_length = 100
+split_on_trailing_comma = true
