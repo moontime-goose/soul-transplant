@@ -1,7 +1,7 @@
 import abc
 from typing import Any
 
-import src.shard as shard
+import src.soul_shard as soul_shard
 from src.model import Album, Filelist
 
 
@@ -26,5 +26,5 @@ class FileCatalog(abc.ABC):
     def already_exists(self, filelist: Filelist) -> bool:
         raise NotImplementedError
 
-    def make_catalog_download_id(self, filelist: Filelist) -> shard.CatalogDownloadId:
+    def make_catalog_download_id(self, filelist: Filelist) -> soul_shard.CatalogDownloadId:
         raise NotImplementedError

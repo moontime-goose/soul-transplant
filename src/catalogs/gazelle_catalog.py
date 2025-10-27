@@ -8,7 +8,7 @@ from typing import Any, Iterable
 import qbittorrentapi
 
 import src.gazelle_api as gazelle_api
-import src.shard as shard
+import src.soul_shard as soul_shard
 from src.file_catalog import FileCatalog
 from src.model import Album, Filelist, SearchResult, TorrentDetails
 from src.search import normalize_query
@@ -58,8 +58,8 @@ class GazelleCatalog(FileCatalog):
             "id": filelist.meta["details"].torrent.id,
         }
 
-    def make_catalog_download_id(self, filelist: Filelist) -> shard.CatalogDownloadId:
-        return shard.CatalogDownloadId(
+    def make_catalog_download_id(self, filelist: Filelist) -> soul_shard.CatalogDownloadId:
+        return soul_shard.CatalogDownloadId(
             catalog_id=self.catalog.id,
             download_id=filelist.meta["details"].torrent.id,
             type=self.catalog.type,

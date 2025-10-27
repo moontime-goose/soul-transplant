@@ -23,8 +23,8 @@ from yaml.parser import ParserError
 
 import src.app as app
 import src.gazelle_api as gazelle_api
-import src.shard as shard
 import src.soul_config as soul_config
+import src.soul_shard as soul_shard
 import src.suppliers.soulseek as soulseek
 from src.catalogs.gazelle_catalog import GazelleCatalog
 from src.file_catalog import FileCatalog
@@ -458,7 +458,7 @@ def drop_shard(config: Config, catalog: FileCatalog, download_match: FilelistMat
     shard_path = os.path.join(download_dir, app.SHARD_FILE_BASENAME)
     with open(shard_path, mode="w") as shard_file:
         files = [
-            shard.FileDownload(
+            soul_shard.FileDownload(
                 download_name=path.basename(file_match.suggested.name),
                 reference_name=file_match.reference.name,
                 reference_size=file_match.reference.size,
@@ -469,7 +469,7 @@ def drop_shard(config: Config, catalog: FileCatalog, download_match: FilelistMat
         reference_folder = os.path.join(
             config.staging_folder, download_match.reference_list.folder_name
         )
-        new_shard = shard.Shard(
+        new_shard = soul_shard.Shard(
             catalog_ids=[catalog_id], files=files, reference_folder=reference_folder
         )
 

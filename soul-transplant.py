@@ -21,8 +21,8 @@ import src.app as app
 import src.gazelle_api as gazelle_api
 import src.soul_config as soul_config
 from src.model import FilelistEntry
-from src.shard import Shard
 from src.soul_config import Config, TorrentClient
+from src.soul_shard import Shard
 from src.utils import *
 
 # Get logger instance

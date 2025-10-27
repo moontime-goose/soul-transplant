@@ -12,7 +12,6 @@ from src.file_match import FilelistMatch
 from src.file_supplier import FileSupplier
 from src.logger import *
 from src.model import Filelist, FilelistEntry
-from src.response_cache import *
 from src.soul_config import Config
 from src.utils import *
 
