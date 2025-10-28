@@ -1,3 +1,8 @@
+from concurrent.futures import CancelledError
+from typing import Optional
+
+from click.termui import progressbar
+
 from src.logger import *
 
 setup_logger("soul-transplant")
@@ -15,6 +20,7 @@ import torf
 import yaml
 from qbittorrentapi import TorrentState
 from rich import print
+from rich.progress import Progress, Task, TaskID
 from yaml.parser import ParserError
 
 import src.app as app
@@ -92,53 +98,26 @@ def main():
     download_dir = config.staging_folder
     shards = [os.path.join(d, app.SHARD_FILE_BASENAME) for d in args.album_folders]
 
-    logger.info("Got %d shards", len(shards))
-    torrent_paths: list[str] = []
+    torrent_file_paths: dict[str, Shard] = dict()
+
+    logger.info("Got %d shard files", len(shards))
     for shard_path in shards:
-        logger.debug("Reading %s", shard_path)
-        if not os.path.exists(shard_path):
-            logger.warning("No shards in %s, skip", shard_path)
+        print()
+
+        try:
+            shard = arrange_torrent_content(config, shard_path)
+
+            torrent_file_paths[get_torrent_file_path(config, shard)] = shard
+        except FileNotFoundError as e:
+            logger.warning("%s: could not repair torrent contents, skip: %s", shard_path, e)
             continue
-
-        with open(shard_path) as f:
-            try:
-                shard = Shard.model_validate(yaml.safe_load(f))
-            except ParserError as e:
-                logger.warning("Skip malformed shard at %s: %s", shard_path, e)
-                continue
-
-        shard_dirname = os.path.dirname(shard_path)
-        if not (
-            is_download_complete(shard_dirname, shard)
-            and folder_structure_restored(shard_dirname, shard)
-        ):
-            logger.info("Skipping %s: download is not complete or is invalid", shard_path)
+        except IsADirectoryError as e:
+            logger.warning("%s: target directory already exists, skip", shard_path)
+        except CancelledError as e:
+            logger.info("%s: cancelled repair, skip", shard_path)
             continue
-
-        shard_catalog = shard.catalog_ids[0]
-        catalog_config = next(
-            (catalog for catalog in config.catalogs if catalog.id == shard_catalog.catalog_id),
-            None,
-        )
-
-        if catalog_config is None:
-            raise ValueError(f"Catalog {shard_catalog.catalog_id} is not configured")
-
-        if catalog_config.type == "Gazelle":
-            tracker = gazelle_api.Tracker(
-                catalog_config.url.encoded_string(), catalog_config.api_key
-            )
-            torrent_file_path = cache_path(f"{shard_catalog.download_id}.torrent")
-            if not os.path.exists(torrent_file_path):
-                logger.info(
-                    "Fetching torrent id=%s to %s",
-                    shard_catalog.download_id,
-                    torrent_file_path,
-                )
-                tracker.download_torrent(shard_catalog.download_id, torrent_file_path)
-            torrent_paths.append(torrent_file_path)
-        else:
-            raise ValueError(f"Catalog type {catalog_config.type} is not supported")
+        except ValueError as e:
+            logger.warning("%s: %s, skip", shard_path, e)
 
     qbit_config = config.torrent_clients[0]
     qbit_client = qbittorrentapi.Client(
@@ -148,28 +127,26 @@ def main():
         password=qbit_config.password,
     )
 
-    hashes = {}
-    for path in torrent_paths:
-        try:
-            t = torf.Torrent.read(path)
-            hashes[t.infohash] = path
-        except torf.TorfError as e:
-            # These are downloaded, not created. If the torrent file from the
-            # tracker is bad somehow, there may be bigger issues, bail altogeter
-            logger.error("Bail on error reading torrent file %s: %s", path, e)
-            exit(1)
+    existing_torrents = qbit_client.torrents_info()
+    existing_hashes = {info["hash"]: info for info in existing_torrents}
 
-    logger.info("Got %d possible torrents to add", len(torrent_paths))
+    new_torrents: dict[str, str] = dict()
 
-    existing_torrents = qbit_client.torrents_info(torrent_hashes=hashes)
-    existing_hashes = [info["hash"] for info in existing_torrents]
-    new_torrents = dict()
-
-    for infohash, path in hashes.items():
-        if infohash in existing_hashes:
-            logger.info("%s already exists in qbit", infohash)
+    for path, shard in torrent_file_paths.items():
+        t = torf.Torrent.read(path)
+        if t.infohash in existing_hashes:
+            logger.info("'%s' already exists in qbit", existing_hashes[t.infohash]["name"])
             continue
-        new_torrents[infohash] = path
+
+        percentage_valid, size = verify_torrent(t, shard)
+        logger.info(
+            "%s: torrent is %.02f%% complete, %.02f MB left to download",
+            path,
+            percentage_valid,
+            (size * percentage_valid / 100) / 1048576,
+        )
+        if percentage_valid == 100 or prompt.Confirm.ask("Submit to qBittorrent?"):
+            new_torrents[t.infohash] = path
 
     logger.info("Got %d new torrents to add", len(new_torrents))
     if not new_torrents:
@@ -230,7 +207,7 @@ def get_full_path(shard: Shard, name):
     return os.path.join(shard.reference_folder, name)
 
 
-def is_download_complete(download_folder, shard: Shard):
+def ensure_download_complete(config: Config, download_folder: str, shard: Shard):
     files = shard.files
 
     prompt_to_confirm = False
@@ -254,12 +231,16 @@ def is_download_complete(download_folder, shard: Shard):
             )
             return False
 
-    return (not prompt_to_confirm) or prompt.Confirm.ask("Match this folder?")
+    if prompt_to_confirm and (
+        config.skip_incomplete_downloads or not prompt.Confirm.ask("Match this folder?")
+    ):
+        raise FileNotFoundError(f"Missing files in {download_folder}")
 
 
-def folder_structure_restored(download_folder, shard: Shard):
+def ensure_torrent_content_structure(download_folder, shard: Shard):
     files = shard.files
 
+    rename_arguments: list[tuple[str, str]] = []
     for entry in files:
         download_name = entry.download_name
         reference_name = entry.reference_name
@@ -278,26 +259,121 @@ def folder_structure_restored(download_folder, shard: Shard):
         if not os.path.exists(dst):
             if not os.path.exists(src):
                 raise FileNotFoundError(src)
-            if not prompt.Confirm.ask(
-                f"Old: {download_name}\nNew: {reference_name}\nRename?", default=True
-            ):
-                return False
 
-            os.rename(src, dst)
+            if src != dst and src.lower() == dst.lower():
+                rename_arguments.append((src, f"{src}.bkp"))
+                rename_arguments.append((f"{src}.bkp", dst))
+            else:
+                rename_arguments.append((src, dst))
 
     if download_folder != shard.reference_folder:
-        src = download_folder
-        dst = shard.reference_folder
+        src = download_folder + "/"
+        dst = shard.reference_folder + "/"
 
         if os.path.exists(dst):
             logger.warning("Folder with the original name already exists, skip")
-            return False
-        if not prompt.Confirm.ask(f"Old: {src}\nNew: {dst}\nRename?", default=True):
-            return False
+            raise IsADirectoryError(dst)
 
-        os.rename(src, dst)
+        rename_arguments.append((src, dst))
 
+    if rename_arguments:
+        logger.info("Queued rename operations:")
+        for src, dst in rename_arguments:
+            logger.info("%-36s -> %-36s", os.path.basename(src), os.path.basename(dst))
+
+        if not prompt.Confirm.ask("Confirm?"):
+            raise CancelledError()
+
+        for src, dst in rename_arguments:
+            os.rename(src, dst)
     return True
+
+
+def arrange_torrent_content(config, shard_path: str) -> Shard:
+    with open(shard_path) as f:
+        shard = Shard.model_validate(yaml.safe_load(f))
+
+    shard_dirname = os.path.dirname(shard_path)
+    ensure_download_complete(config, shard_dirname, shard)
+    ensure_torrent_content_structure(shard_dirname, shard)
+
+    return shard
+
+
+def get_torrent_file_path(config: Config, shard: Shard) -> str:
+    shard_catalog = shard.catalog_ids[0]
+    catalog_config = next(
+        (catalog for catalog in config.catalogs if catalog.id == shard_catalog.catalog_id),
+        None,
+    )
+
+    if catalog_config is None:
+        raise ValueError(f"Catalog {shard_catalog.catalog_id} is not configured")
+
+    if catalog_config.type == "Gazelle":
+        tracker = gazelle_api.Tracker(
+            config, catalog_config.url.encoded_string(), catalog_config.api_key
+        )
+
+        torrent_file_path = cache_path(f"{shard_catalog.download_id}.torrent")
+        if not os.path.exists(torrent_file_path):
+            logger.info(
+                "Fetching torrent id=%s to %s",
+                shard_catalog.download_id,
+                torrent_file_path,
+            )
+            tracker.download_torrent(shard_catalog.download_id, torrent_file_path)
+        return torrent_file_path
+    else:
+        raise ValueError(f"Catalog type {catalog_config.type} is not supported")
+
+
+class TorrentVerifyCallback:
+    pieces_valid: int = 0
+    pieces_invalid: int = 0
+    progress: Progress = Progress()
+    task: TaskID
+
+    def __init__(self, name):
+        self.progress.start()
+        self.task = self.progress.add_task(name)
+
+    def __call__(
+        self,
+        t: torf.Torrent,
+        file: str,
+        pieces_checked: int,
+        pieces_total: int,
+        index: int,
+        piece_sha: Optional[bytes],
+        exception: Optional[torf.TorfError],
+    ):
+        if exception is None:
+            self.progress.update(self.task, total=pieces_total, advance=1)
+            self.pieces_valid += 1
+        elif not isinstance(exception, torf.MetainfoError) and not isinstance(
+            exception, torf.ReadError
+        ):
+            raise exception
+        else:
+            self.progress.update(self.task, total=pieces_total, advance=1)
+            self.pieces_invalid += 1
+
+        if index == pieces_total - 1:
+            self.progress.stop_task(self.task)
+
+
+def verify_torrent(t: torf.Torrent, shard: Shard) -> tuple[float, int]:
+    try:
+        cb = TorrentVerifyCallback(t.name[:40] if t.name else "Progress")
+        t.verify(shard.reference_folder, callback=cb, interval=0)
+
+        return (cb.pieces_valid * 100.0 / (cb.pieces_valid + cb.pieces_invalid), t.size)
+    except torf.TorfError as e:
+        # These are downloaded, not created. If the torrent file from the
+        # tracker is bad somehow, there may be bigger issues, bail altogeter
+        logger.error("Unexpected error on torrent contente validation: %s", e)
+        exit(1)
 
 
 if __name__ == "__main__":

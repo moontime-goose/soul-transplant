@@ -26,7 +26,7 @@ def prompt_yes_no(
     """
 
     prompt_base = prompt.rstrip().rstrip("?")
-    if force_user or config.timid:
+    if not config.unattended and force_user or config.timid:
         return Confirm.ask(f">>> {prompt_base}?", default=default, show_default=True)
     else:
         if log_auto:

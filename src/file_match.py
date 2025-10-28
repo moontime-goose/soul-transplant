@@ -1,4 +1,5 @@
 import collections
+import itertools
 import logging
 import os
 import os.path as path
@@ -43,6 +44,22 @@ class FilelistMatch:
         self.files = files
         self.download_list = download_list
         self.reference_list = reference_list
+
+    def folder_name_similarity(self):
+        return int(
+            100
+            * jellyfish.jaro_winkler_similarity(
+                normalize_query(os.path.basename(self.reference_list.folder_name)),
+                normalize_query(os.path.basename(self.suggested_folder)),
+            )
+        )
+
+    def overall_similarity(self) -> int:
+        return int(
+            round(self.folder_name_similarity() + sum(f.similarity for f in self.files))
+            / len(self.files)
+            + 1
+        )
 
 
 def attempt_filelist_match(
@@ -300,38 +317,37 @@ def format_match(list_match) -> str:
 
     reference_folder = list_match.reference_list.folder_name
     suggested_folder = list_match.suggested_folder
-    dir_matches = reference_folder == suggested_folder
+    folder_matches = reference_folder == suggested_folder
+    folder_name_similarity = int(
+        100
+        * jellyfish.jaro_winkler_similarity(
+            normalize_query(os.path.basename(reference_folder)),
+            normalize_query(os.path.basename(suggested_folder)),
+        )
+    )
     files_match = all(m.similarity == 100 for m in list_match.files)
 
     max_filename_len = max(len(m.reference.name) for m in list_match.files)
     column_length = max([max_filename_len, len(reference_folder)])
 
-    dir_header_line = color_line(
-        f"{'Reference folder':{column_length+8}}\t||\t{'Matched folder'}",
-        dir_matches,
-    )
-    match_message.append(dir_header_line)
+    header_line = f"name match\t{'Reference':{column_length+8}}\tMatched"
+    match_message.append(header_line)
 
     dir_match_line = color_line(
-        f"{reference_folder:{column_length+8}}\t<-\t{suggested_folder}", 100 * dir_matches
+        f"{folder_name_similarity:3}%\t\t{reference_folder:{column_length+8}}\t<-\t{suggested_folder}",
+        100 * folder_matches,
     )
     match_message.append(dir_match_line)
-    match_message.append("")
 
-    files_header_line = color_line(
-        f"{'Reference files':{column_length}}\t\t<-\t{'Matched files'}",
-        dir_matches,
-    )
-    match_message.append(files_header_line)
-
-    for m in list_match.files:
+    for m, n in zip(list_match.files, itertools.chain(list_match.files[1:], [None])):
+        tree_symbol = "├── " if n else "└── "
         line = color_line(
-            f"  {m.similarity:3}%\t{m.reference.name:{column_length}}\t<-\t{os.path.basename(m.suggested.name)}",
+            f"{m.similarity:3}%\t\t{tree_symbol}{m.reference.name:{column_length}}\t<-\t{tree_symbol}{os.path.basename(m.suggested.name)}",
             m.similarity == 100,
         )
         match_message.append(line)
 
-    if not dir_matches:
+    if not folder_matches:
         match_message.append("[red]Directory name mismatch[/]")
 
     if not files_match:
@@ -343,15 +359,19 @@ def format_match(list_match) -> str:
 def prompt_match_confirmation(config: Config, list_match: FilelistMatch, prompt) -> bool:
     match_message = format_match(list_match)
 
-    reference_folder = list_match.reference_list.folder_name
-    suggested_folder = list_match.suggested_folder
-    dir_matches = reference_folder == suggested_folder
-    files_match = all(m.similarity == 100 for m in list_match.files)
+    dir_similarity = list_match.folder_name_similarity()
+    min_file_similarity = min(f.similarity for f in list_match.files)
+    avg_file_similarity = sum(f.similarity for f in list_match.files) / len(list_match.files)
+
+    if config.confident:
+        match_looks_good = dir_similarity > 50 and min_file_similarity > 50
+    else:
+        match_looks_good = dir_similarity == 100 and min_file_similarity == 100
 
     return prompt_yes_no(
         config,
-        f"\n{match_message}\n{color_line(prompt, dir_matches and files_match)}",
+        f"\n{match_message}\n{color_line(prompt, match_looks_good)}",
         default=True,
         log_auto=logging.INFO,
-        force_user=True,
+        force_user=not match_looks_good,
     )

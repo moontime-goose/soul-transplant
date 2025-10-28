@@ -2,6 +2,7 @@ import random
 import threading
 import time
 from collections import defaultdict
+from os import path
 from typing import Any, Optional
 
 import slskd_api
@@ -20,6 +21,7 @@ logger = get_logger()
 
 class SlskdApi(FileSupplier):
     slskd: slskd_api.SlskdClient
+    config: Config
 
     def __init__(self, config: Config):
         host = f"{config.soulseek_client.host}:{config.soulseek_client.port}"
@@ -79,9 +81,6 @@ class SlskdApi(FileSupplier):
 
         return (ret_state, list(responses))
 
-    def search(self, query: str, timeout_ms=15000) -> dict:
-        return self.lookup_completed_search(query) or self.start_search(query, timeout_ms)
-
     def enqueue_download(self, filelist: Filelist) -> tuple[FileSupplier.DownloadStatus, Any]:
         slskd_filelist = [f.meta["file"] for f in filelist.files]
         responses = [self.slskd.transfers.enqueue(filelist.meta["username"], slskd_filelist)]
@@ -92,6 +91,37 @@ class SlskdApi(FileSupplier):
             else FileSupplier.DownloadStatus.FAILED
         )
         return (status, all_succeeded)
+
+    def is_downloadable(self, folder_match: FilelistMatch) -> bool:
+        # Sanity check - slskd does not allow specifying download path, so
+        # there's no control over what directories are going to be created.
+        # Check that there are no conflicts
+        target_folder = folder_match.download_list.folder_name
+        reference_folder = folder_match.reference_list.folder_name
+        target_path = path.join(self.config.staging_folder, target_folder)
+        if path.exists(target_path):
+            logger.info(
+                "MATCH: '%s' skip: target folder already exists",
+                target_folder,
+            )
+            return False
+
+        reference_path = path.join(self.config.staging_folder, reference_folder)
+        if path.exists(reference_path):
+            logger.info(
+                "MATCH: '%s' skip: reference folder '%s' already exists, avoid rename conflict",
+                target_folder,
+                reference_folder,
+            )
+            return False
+
+        return True
+
+    def format_list_oneline(self, filelist: Filelist) -> str:
+        return f"{filelist.folder_name} from user [black on blue]{filelist.meta['username']}[/]"
+
+    def search(self, query: str, timeout_ms=15000) -> dict:
+        return self.lookup_completed_search(query) or self.start_search(query, timeout_ms)
 
     def lookup_completed_search(self, query: str) -> Optional[dict]:
         searches = self.slskd.searches.get_all()
@@ -123,8 +153,9 @@ class SlskdApi(FileSupplier):
         return (states, responses)
 
     @sleep_and_retry("slskd", log_level=logging.INFO, min_logged_sleep_sec=5)
-    @limits(calls=25, period=200)
     @limits(calls=1, period=4)
+    @limits(calls=10, period=60)
+    @limits(calls=25, period=200)
     def start_search(self, query: str, timeout_ms=10000) -> dict:
         """
         Kick off a search with given text query

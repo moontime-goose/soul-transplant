@@ -1,16 +1,15 @@
-import json
 import logging
 import sqlite3
-from datetime import datetime, timedelta, timezone
-from typing import Iterable, Optional
+from typing import Iterable
 
 import requests as reqs
+import requests_cache
 from ratelimit import limits, sleep_and_retry
 
 import src.app as app
 from src.model import Album, GroupDetails, SearchResult, TorrentDetails
+from src.soul_config import Config
 from src.utils import *
-from src.utils import cache_path
 
 logger = app.get_logger()
 
@@ -34,12 +33,14 @@ class Tracker:
     db_conn: sqlite3.Connection
     tracker_url: str
     tracker_api_key: str
+    session: requests_cache.CachedSession
 
     CACHE_TABLE_NAME = "tracker"
 
-    def __init__(self, tracker_url: str, tracker_api_key: str):
-        self.tracker_url = tracker_url
+    def __init__(self, config: Config, tracker_url: str, tracker_api_key: str):
+        self.tracker_url = tracker_url.rstrip("/")
         self.tracker_api_key = tracker_api_key
+        self.session = requests_cache.CachedSession(expire_after=config.cache_expire_after)
 
     def search_album_group(
         self, album: Album, max_pages=3, media_format=None, media_encoding=None
@@ -131,7 +132,11 @@ class Tracker:
         Download .torrent file and save it to given file
         """
 
-        resp = self.send_request({"action": "download", "id": torrent_id})
+        resp = reqs.get(
+            f"{self.tracker_url}/ajax.php",
+            headers={"Authorization": self.tracker_api_key},
+            params={"action": "download", "id": torrent_id},
+        )
 
         resp.raise_for_status()
 
@@ -146,8 +151,17 @@ class Tracker:
         Caches successful responses to avoid repeating request to tracker later.
         """
 
-        resp = self.send_request(params)
-        resp.raise_for_status()
+        request = reqs.Request(
+            "GET",
+            f"{self.tracker_url}/ajax.php",
+            headers={"Authorization": self.tracker_api_key},
+            params=params,
+        ).prepare()
+
+        if not self.session.cache.contains(request=request):
+            resp = self.send_ratelimited_request(request)
+        else:
+            resp = self.session.send(request, only_if_cached=True)
 
         body = resp.json()
 
@@ -160,14 +174,11 @@ class Tracker:
     # tracker RED says 10 requests per 10 seconds, but keep it lower for the time
     # being, to have more time to catch errors in program output
     @sleep_and_retry("tracker", log_level=logging.INFO)
+    @limits(calls=1, period=1)
     @limits(calls=3, period=4)
-    def send_request(self, params):
-        return reqs.request(
-            "GET",
-            f"{self.tracker_url}/ajax.php",
-            headers={"Authorization": self.tracker_api_key},
-            params=params,
-        )
+    @limits(calls=7, period=14)
+    def send_ratelimited_request(self, request: reqs.PreparedRequest):
+        return self.session.send(request)
 
     def format_group_link(self, group_id) -> str:
         return f"{self.tracker_url}/torrents.php?id={group_id}"
