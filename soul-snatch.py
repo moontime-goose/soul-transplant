@@ -322,8 +322,6 @@ def process_search(
     download if there are matching files.
     """
 
-    download_username = None
-
     for filelist in filelists:
         folder_match = attempt_filelist_match(
             album, filelist, reference_list, media_format=config.media_format
@@ -331,41 +329,46 @@ def process_search(
         if folder_match is None:
             continue
 
+        # TODO: checks below and slskd-specific (including the log messages) and
+        # could be abstracted
+
+        # Sanity check - slskd does not allow specifying download path, so
+        # there's no control over what directories are going to be created.
+        # Check that there are no conflicts
+        username = filelist.meta["username"]
+        target_folder = folder_match.suggested_folder
+        reference_folder = folder_match.reference_list.folder_name
+
         link = catalog.format_meta_link(reference_list)
         logger.info(
             "[on green]MATCH[/]: %s from [black on blue]%s[/]", link, filelist.meta["username"]
         )
 
-        # Doing infohash check is somewhat dumb: application could look up infohash on
-        # tracker ahead of time (<1 second) and avoid soulseek search (>5
-        # seconds). For the time being I picked extra work for soulseek. Also,
-        # it might work out for the better, because soulseek might return a few
-        # more responses with differently phrased and more specific queries.
-        #
-        # It this goes far enough to port to asyncio or an alternative,
-        # infohashes can be easily checked while soulseek searches are being
-        # executed
-
-        download_dir = path.join(config.staging_folder, folder_match.suggested_folder)
-        if os.path.exists(download_dir):
+        # Sanity check - slskd does not allow specifying download path, so
+        # there's no control over what directories are going to be created.
+        # Check that there are no conflicts
+        download_dir = path.join(config.staging_folder, target_folder)
+        if path.exists(download_dir):
             logger.info(
                 "[on green]MATCH[/]: '%s' skip: target folder already exists",
-                folder_match.suggested_folder,
+                target_folder,
             )
             continue
 
-        download_dir = path.join(config.staging_folder, folder_match.reference_list.folder_name)
-        if os.path.exists(download_dir):
+        download_dir = path.join(config.staging_folder, reference_folder)
+        if path.exists(download_dir):
             logger.info(
-                "[on green]MATCH[/]: '%s' skip: reference folder already exists",
-                folder_match.suggested_folder,
+                "[on green]MATCH[/]: '%s' skip: reference folder '%s' already exists, avoid rename conflict",
+                target_folder,
+                reference_folder,
             )
             continue
 
+        # Download might enqueue-able at this point, confirm with user
         if not prompt_match_confirmation(
             config,
             folder_match,
-            f"[on green]MATCH[/]: '{folder_match.suggested_folder}': from user [black on blue]{filelist.meta['username']}[/]. Accept?",
+            f"[on green]MATCH[/]: '{target_folder}': from user [black on blue]{username}[/]. Accept?",
         ):
             continue
 
@@ -407,7 +410,7 @@ def process_search(
 
 
 def target_folder_exists(base_dir: str, filelist: Filelist) -> bool:
-    return os.path.exists(os.path.join(base_dir, filelist.folder_name))
+    return path.exists(path.join(base_dir, filelist.folder_name))
 
 
 def reject_directory_conflicts(
@@ -445,7 +448,7 @@ def drop_shard(config: Config, catalog: FileCatalog, download_match: FilelistMat
 
     os.mkdir(download_dir)
 
-    shard_path = os.path.join(download_dir, app.SHARD_FILE_BASENAME)
+    shard_path = path.join(download_dir, app.SHARD_FILE_BASENAME)
     with open(shard_path, mode="w") as shard_file:
         files = [
             soul_shard.FileDownload(
@@ -456,7 +459,7 @@ def drop_shard(config: Config, catalog: FileCatalog, download_match: FilelistMat
             for file_match in download_match.files
         ]
         catalog_id = catalog.make_catalog_download_id(download_match.reference_list)
-        reference_folder = os.path.join(
+        reference_folder = path.join(
             config.staging_folder, download_match.reference_list.folder_name
         )
         new_shard = soul_shard.Shard(
