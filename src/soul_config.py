@@ -66,6 +66,7 @@ class Config(BaseModel):
     check_infohash: bool = True
     search_folder_names: bool = False
     cache_expire_after: int = Field(default=7 * 24 * 60 * 60, ge=0)  # 7 days in seconds
+    show_progress_bars: bool = True
 
 
 def make_config(args=None) -> dict:

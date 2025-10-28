@@ -3,7 +3,7 @@ Logic related to selecting torrent upload applicable for soulseek search,
 based on contents, media format, user preferences, and whatnot.
 """
 
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 
 import qbittorrentapi
 
@@ -48,6 +48,17 @@ class GazelleCatalog(FileCatalog):
 
         return filelists
 
+    def fill_meta(self, result: Filelist) -> Filelist:
+        details: TorrentDetails = result.meta["details"]
+        full_details = self.tracker.get_torrent_details(details.torrent.id)
+
+        assert full_details.torrent.info_hash
+
+        new_result = result.model_copy()
+        new_result.meta["details"] = full_details
+
+        return new_result
+
     def format_meta_link(self, filelist: Filelist) -> str:
         return self.tracker.format_torrent_link(filelist.meta["details"].torrent.id)
 
@@ -64,44 +75,6 @@ class GazelleCatalog(FileCatalog):
             download_id=filelist.meta["details"].torrent.id,
             type=self.catalog.type,
         )
-
-    def already_exists(self, filelist: Filelist) -> bool:
-        if not self.config.check_infohash:
-            return False
-
-        qbit_config = self.config.torrent_clients[0]
-        qbit_client = qbittorrentapi.Client(
-            host=qbit_config.host,
-            port=qbit_config.port,
-            username=qbit_config.username,
-            password=qbit_config.password,
-        )
-
-        torrent = filelist.meta["details"].torrent
-        if torrent.info_hash is None:
-            # Avoid modifying the arguments passed (mostly for my sanity)
-            t_candidate = self.tracker.get_torrent_details(torrent.id)
-            torrent = t_candidate.torrent
-            assert torrent.info_hash is not None
-
-        qbit_torrents = qbit_client.torrents_info()
-        suspiciously_similar_torrent = next(
-            (
-                info
-                for info in qbit_torrents
-                if info["hash"] == torrent.info_hash or info["name"] == filelist.folder_name
-            ),
-            None,
-        )
-        if suspiciously_similar_torrent is not None:
-            logger.debug(
-                "Similar torrent already exists: hash %s, folder '%s'",
-                suspiciously_similar_torrent["hash"],
-                suspiciously_similar_torrent["name"],
-            )
-            return True
-
-        return False
 
 
 def search_tracker_candidates(

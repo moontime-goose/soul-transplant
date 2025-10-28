@@ -67,12 +67,12 @@ class SlskdApi(FileSupplier):
                 time.sleep(2)
                 responses = self.slskd.searches.search_responses(search_id)
 
-        logger.info(
-            "Soulseek search '%s' completed with %d user responses",
+        logger.debug(
+            "Soulseek search '%s' completed (%d responses) state: %s",
             state["searchText"],
             len(responses),
+            states,
         )
-        logger.debug("Soulseek search '%s' completed with state: %s", state["searchText"], states)
 
         responses = triage_responses(responses)
         responses = map(parse_slskd_response, responses)

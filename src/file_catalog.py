@@ -1,5 +1,5 @@
 import abc
-from typing import Any
+from typing import Any, Optional
 
 import src.soul_shard as soul_shard
 from src.model import Album, Filelist
@@ -15,6 +15,10 @@ class FileCatalog(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
+    def fill_meta(self, result: Filelist) -> Filelist:
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def format_meta_link(self, filelist: Filelist) -> str:
         raise NotImplementedError
 
@@ -23,8 +27,5 @@ class FileCatalog(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def already_exists(self, filelist: Filelist) -> bool:
-        raise NotImplementedError
-
     def make_catalog_download_id(self, filelist: Filelist) -> soul_shard.CatalogDownloadId:
         raise NotImplementedError

@@ -17,5 +17,6 @@ def make_search_strings(album: Album) -> list[str]:
         for s in [
             rf""""{album.artist}" "{album.name}" {album.year or ""}""",
             rf"""{album.artist} {album.name}""",
+            rf""""{album.name}" {album.year or ""}""",
         ]
     ]

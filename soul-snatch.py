@@ -1,6 +1,8 @@
 import logging
 from collections import defaultdict
 
+from requests_cache.serializers import dynamodb_document_serializer
+
 from src.logger import get_handler, setup_logger
 
 setup_logger("soul-snatch")
@@ -10,13 +12,16 @@ import json
 import os
 import signal
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import partial
 from os import path
 from typing import Iterable, Optional
 
 import click
+import qbittorrentapi
 import requests
 import requests_cache
+import tqdm
 import yaml
 from rich import print
 from yaml.parser import ParserError
@@ -217,19 +222,10 @@ def process_album_search(
 
     print(f"{album}: start search")
 
-    catalog_results = catalog.search(album)
-
-    if prompt_yes_no(
-        config, f"{album}: edit {len(catalog_results)} results?", default=False, force_user=True
-    ):
-        catalog_results = select_results(config, catalog, catalog_results)
-
-    # Pre-check whether target directory already exists. This might change after
-    # some downloads are approved.
-    # t_candidates = list(reject_directory_conflicts(t_candidates, config.staging_folder))
+    catalog_results = get_catalog_results(config, catalog, album)
 
     if not catalog_results:
-        logger.info("%s: no tracker matches found", album)
+        logger.info("%s: no applicable catalog matches found", album)
         return
 
     # Cast a wide net. Generic queries will work of less popular stuff, where
@@ -238,13 +234,10 @@ def process_album_search(
 
     logger.info("%s: search soulseek for %d candidates", album, len(catalog_results))
 
-    results = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        results = list(
-            executor.map(lambda s: supplier.perform_search(s), make_search_strings(album))
-        )
+    thread_pool = ThreadPoolExecutor(max_workers=8)
 
-        results = [(catalog_card, result) for catalog_card in catalog_results for result in results]
+    search_strings = make_search_strings(album)
+    results = [thread_pool.submit(lambda s=s: supplier.perform_search(s)) for s in search_strings]
 
     # If this occurs, then more specific queries might help. I haven't found any
     # documentation on soulseek query syntax (if any), so try searching for
@@ -252,24 +245,25 @@ def process_album_search(
     is_response_limit_reached = False
 
     done_list = []
-    retry_list = []
-    for catalog_card, (state, filelists) in results:
-        if state == FileSupplier.SearchStatus.LIMIT_REACHED:
-            is_response_limit_reached = True
+    for supplier_result_fut in as_completed(results):
+        (state, filelists) = supplier_result_fut.result()
+        for catalog_card in catalog_results:
+            if state == FileSupplier.SearchStatus.LIMIT_REACHED:
+                is_response_limit_reached = True
+            if any(done.folder_name == catalog_card.folder_name for done in done_list):
+                logger.info("%s - target folder already exists, skip", catalog_card.folder_name)
 
-        if target_folder_exists(config.staging_folder, catalog_card):
-            logger.debug("Target folder '%s' already exists, skip", catalog_card.folder_name)
-            continue
+            if target_folder_exists(config.staging_folder, catalog_card):
+                logger.debug("Target folder '%s' already exists, skip", catalog_card.folder_name)
+                continue
 
-        username = process_search(config, album, catalog, supplier, catalog_card, filelists)
+            username = process_search(config, album, catalog, supplier, catalog_card, filelists)
 
-        if username is not None:
-            logger.info(
-                "[black on blue]%s[/], thanks! %s found", username, catalog_card.folder_name
-            )
-            done_list.append(catalog_card)
-        else:
-            retry_list.append(catalog_card)
+            if username is not None:
+                logger.info(
+                    "[black on blue]%s[/], thanks! %s found", username, catalog_card.folder_name
+                )
+                done_list.append(catalog_card)
 
     # Maybe, try search for folder names specifically. This is no silver bullet,
     # soulseek has been adding extra stuff even if query uses quotes to try
@@ -277,19 +271,16 @@ def process_album_search(
     # north of 20 different folder names to look up. Searches below will be
     # rate-limited often
 
-    if not should_search_by_folder_names(config, is_response_limit_reached, album, len(retry_list)):
+    if not should_search_by_folder_names(
+        config, is_response_limit_reached, album, len(catalog_results) - len(done_list)
+    ):
         logger.info("Matched %d torrent to soulseek", len(done_list))
         # Done with this album
         return
 
     # More specific searched. No ideas other than folder names at the moment
 
-    retry_list = [
-        catalog_card
-        for catalog_card in retry_list
-        if not target_folder_exists(config.staging_folder, catalog_card)
-    ]
-
+    retry_list = [card for card in catalog_results if card not in done_list]
     folder_map: defaultdict[str, list[Filelist]] = defaultdict(list)
 
     for catalog_card in retry_list:
@@ -297,25 +288,23 @@ def process_album_search(
 
     logger.info("Matched %d torrents, try %d folder name searches", len(done_list), len(folder_map))
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        results = executor.map(
-            lambda item: (
-                item[1],
-                supplier.perform_search(normalize_query(item[0])),
-            ),
-            folder_map.items(),
-        )
+    search_task = lambda supplier, folder, card: (card, supplier.perform_search(folder))
+    folder_results = [
+        thread_pool.submit(partial(search_task, supplier, folder, card))
+        for (folder, cards) in folder_map.items()
+        for card in cards
+    ]
 
     # Handle completion and results for folder searches
-    for catalog_cards, (_, filelists) in results:
-        for catalog_card in catalog_cards:
-            username = process_search(config, album, catalog, supplier, catalog_card, filelists)
-            if username is not None:
-                logger.info(
-                    "[black on blue]%s[/], thanks! %s found", username, catalog_card.folder_name
-                )
-                done_list.append(catalog_card)
-                break
+    for fut in as_completed(folder_results):
+        catalog_card, (_, filelists) = fut.result()
+        username = process_search(config, album, catalog, supplier, catalog_card, filelists)
+        if username is not None:
+            logger.info(
+                "[black on blue]%s[/], thanks! %s found", username, catalog_card.folder_name
+            )
+            done_list.append(catalog_card)
+            break
 
     logger.info("Matched %d total torrents to soulseek", len(done_list))
 
@@ -327,7 +316,7 @@ def process_search(
     supplier: FileSupplier,
     reference_list: Filelist,
     filelists: list[Filelist],
-) -> Optional[str]:
+) -> bool:
     """
     Decide whether files from given responses can be used, and enqueue a (1)
     download if there are matching files.
@@ -373,12 +362,6 @@ def process_search(
             )
             continue
 
-        if catalog.already_exists(folder_match.reference_list):
-            logger.warning(
-                "[on green]MATCH[/]: '%s' skip: torrent already in qbit", reference_list.folder_name
-            )
-            break
-
         if not prompt_match_confirmation(
             config,
             folder_match,
@@ -387,7 +370,7 @@ def process_search(
             continue
 
         try:
-            shard_path = drop_shard(config, catalog, folder_match)
+            drop_shard(config, catalog, folder_match)
         except FileExistsError:
             logger.info(
                 "[on green]MATCH[/]: '%s' skip: target directory %s already exists",
@@ -399,7 +382,14 @@ def process_search(
             status, _ = supplier.enqueue_download(folder_match.download_list)
             if status == FileSupplier.DownloadStatus.SCHEDULED:
                 download_username = filelist.meta["username"]
-                break
+
+                logger.info(
+                    "[black on blue]%s[/], thanks! %s found",
+                    download_username,
+                    filelist.folder_name,
+                )
+
+                return True
         except requests.HTTPError as e:
             # This is not necessarily an error, large amount of files enqueued
             # from the same user might result in slskd instance, or remote
@@ -413,7 +403,7 @@ def process_search(
             ):
                 break
 
-    return download_username
+    return False
 
 
 def target_folder_exists(base_dir: str, filelist: Filelist) -> bool:
@@ -535,6 +525,66 @@ def make_catalog(config: Config, catalog: CatalogConfig) -> FileCatalog:
         return GazelleCatalog(config, catalog, tracker)
     else:
         raise NotImplementedError
+
+
+def get_catalog_results(config: Config, catalog: FileCatalog, album: Album) -> list[Filelist]:
+    catalog_results = catalog.search(album)
+
+    if not catalog_results:
+        return catalog_results
+
+    if prompt_yes_no(
+        config, f"{album}: edit {len(catalog_results)} results?", default=False, force_user=True
+    ):
+        catalog_results = select_results(config, catalog, catalog_results)
+
+    logger.info("Getting full catalog information for %d results", len(catalog_results))
+
+    if config.show_progress_bars:
+        catalog_results = tqdm.tqdm(catalog_results, desc="Catalog search")
+
+    if config.check_infohash:
+        catalog_results = map(lambda result: catalog.fill_meta(result), catalog_results)
+
+    catalog_results = list(reject_if_torrent_exists(config, catalog_results))
+
+    if not catalog_results:
+        return []
+
+    return catalog_results
+
+
+def reject_if_torrent_exists(config: Config, filelists: Iterable[Filelist]):
+    qbit_config = config.torrent_clients[0]
+    qbit_client = qbittorrentapi.Client(
+        host=qbit_config.host,
+        port=qbit_config.port,
+        username=qbit_config.username,
+        password=qbit_config.password,
+    )
+
+    qbit_torrents = qbit_client.torrents_info()
+    infohash_map = {info["hash"]: info for info in qbit_torrents}
+    name_map = {info["name"]: info for info in qbit_torrents}
+
+    def torrent_exists(fl: Filelist):
+        infohash = None
+        if details := fl.meta.get("details", None):
+            infohash = details.torrent.info_hash
+
+        folder_name = fl.folder_name
+
+        suspiciously_similar_torrent = infohash_map.get(infohash, None) or name_map.get(
+            folder_name, None
+        )
+
+        if suspiciously_similar_torrent is not None:
+            logger.debug("%s - already exists in qbit, hash %s", folder_name, infohash)
+            return True
+
+        return False
+
+    return filter(lambda fl: not torrent_exists(fl), filelists)
 
 
 if __name__ == "__main__":
