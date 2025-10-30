@@ -1,4 +1,3 @@
-import collections
 import itertools
 import logging
 import os
@@ -6,14 +5,14 @@ import os.path as path
 from collections import Counter, defaultdict
 
 import jellyfish
-from rich import print
 
 import src.app as app
 from src.model import Album, Filelist, FilelistEntry
 from src.search import normalize_query
-from src.utils import *
+from src.soul_config import Config
+from src.utils import prompt_yes_no, to_percentage
 
-logger = app.get_logger()
+logger = logging.getLogger(app.LIB_LOGGER_NAME)
 
 
 class FileEntryMatch:
@@ -272,7 +271,6 @@ def file_entry_similarity(album: Album, reference: FilelistEntry, candidate: Fil
     [x1, x2, x3] = sorted([normalized_similarity, track_name_similarity, original_similarity])
     aggregate_similarity = (x1 * 2 + x2 * 4 + x3 * 2) / 8
 
-    to_percentage = lambda x: int(round(x * 100))
     logger.debug(
         "Inexact match '%s' -> '%s': agg %d%% orig %.2f norm %.2f track %.2f",
         name1,
@@ -361,7 +359,6 @@ def prompt_match_confirmation(config: Config, list_match: FilelistMatch, prompt)
 
     dir_similarity = list_match.folder_name_similarity()
     min_file_similarity = min(f.similarity for f in list_match.files)
-    avg_file_similarity = sum(f.similarity for f in list_match.files) / len(list_match.files)
 
     if config.confident:
         match_looks_good = dir_similarity > 50 and min_file_similarity > 50

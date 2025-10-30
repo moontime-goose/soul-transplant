@@ -1,22 +1,15 @@
-import logging
-from collections import defaultdict
-
-from requests_cache.serializers import dynamodb_document_serializer
-
-from src.logger import get_handler, setup_logger
-
-setup_logger("soul-snatch")
-
 import argparse
 import itertools
 import json
+import logging
 import os
 import signal
 import sys
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 from os import path
-from typing import Iterable, Optional
+from typing import Iterable
 
 import requests
 import tqdm
@@ -25,6 +18,7 @@ from rich import print
 
 import src.app as app
 import src.gazelle_api as gazelle_api
+import src.logger as soul_logger
 import src.soul_config as soul_config
 import src.soul_shard as soul_shard
 import src.suppliers.soulseek as soulseek
@@ -36,12 +30,13 @@ from src.file_match import (
     prompt_match_confirmation,
 )
 from src.file_supplier import FileSupplier
+from src.logger import get_handler
 from src.model import Album, Filelist
-from src.search import make_search_strings, normalize_query
+from src.search import make_search_strings
 from src.soul_config import CatalogConfig, Config
-from src.utils import *
+from src.utils import prompt_yes_no
 
-logger = app.get_logger()
+logger = logging.getLogger("soul-snatch")
 
 
 def signal_handler(sig, frame):
@@ -159,23 +154,25 @@ def main():
 
     parser = make_parser()
     args = parser.parse_args()
-    logger.setLevel(args.loglevel.upper())
+
     try:
         config = merge_config_arguments(soul_config.make_config(args), args)
     except FileNotFoundError:
         print("Config file not found, exit")
         sys.exit(1)
 
+    logger.setLevel(args.loglevel.upper())
+    logger.addHandler(get_handler(args.log_dev))
+
+    soul_logger.setup_logger(args.log_dev)
+
     if args.log_dev:
-        logger.addHandler(get_handler(log_dev=True))
         logging.getLogger("urllib3").setLevel(args.log_dev.upper())
         logging.getLogger("urllib3").addHandler(get_handler(log_dev=True))
         logging.getLogger("requests").setLevel(args.log_dev.upper())
         logging.getLogger("requests").addHandler(get_handler(log_dev=True))
         logging.getLogger("requests_cache").setLevel(args.log_dev.upper())
         logging.getLogger("requests_cache").addHandler(get_handler(log_dev=True))
-    else:
-        logger.addHandler(get_handler(log_dev=False))
 
     if len(config.catalogs) > 1:
         logger.warning("Multiple catalogs are not yet supported, using the first one")
@@ -280,7 +277,9 @@ def process_album_search(
 
     logger.info("Matched %d torrents, try %d folder name searches", len(done_list), len(folder_map))
 
-    search_task = lambda supplier, folder, card: (card, supplier.perform_search(folder))
+    def search_task(supplier, folder, card):
+        return (card, supplier.perform_search(folder))
+
     folder_results = [
         thread_pool.submit(partial(search_task, supplier, folder, card))
         for (folder, cards) in folder_map.items()
@@ -452,8 +451,8 @@ def parse_albumlist(filename):
 
     """
 
-    l = json.load(open(filename))
-    return [Album.model_validate(a) for a in l]
+    j_list = json.load(open(filename))
+    return [Album.model_validate(a) for a in j_list]
 
 
 def should_search_by_folder_names(

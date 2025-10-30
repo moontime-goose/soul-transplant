@@ -1,22 +1,21 @@
+import logging
 import random
 import threading
 import time
-from collections import defaultdict
 from os import path
 from typing import Any, Optional
 
 import slskd_api
-from ratelimit import limits, sleep_and_retry
-from yaml import parse
+from ratelimit import limits
 
+from src.app import LIB_LOGGER_NAME
 from src.file_match import FilelistMatch
 from src.file_supplier import FileSupplier
-from src.logger import *
 from src.model import Filelist, FilelistEntry
 from src.soul_config import Config
-from src.utils import *
+from src.utils import sleep_and_retry
 
-logger = get_logger()
+logger = logging.getLogger(LIB_LOGGER_NAME)
 
 
 class SlskdApi(FileSupplier):

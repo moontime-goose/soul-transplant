@@ -1,5 +1,4 @@
 from src.model import Album
-from src.utils import flatten
 
 
 def normalize_query(s: str) -> str:

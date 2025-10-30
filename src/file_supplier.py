@@ -3,7 +3,6 @@ from enum import Enum
 from typing import Any
 
 from src.file_match import Filelist, FilelistMatch
-from src.model import Filelist
 
 
 class FileSupplier(abc.ABC):

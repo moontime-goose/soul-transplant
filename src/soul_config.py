@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 from os import path
@@ -10,7 +11,7 @@ from yaml.parser import ParserError
 
 import src.app as app
 
-logger = app.get_logger()
+logger = logging.getLogger(app.LIB_LOGGER_NAME)
 
 
 class CatalogConfig(BaseModel):

@@ -1,9 +1,3 @@
-import logging
-
-from src.logger import get_handler, setup_logger
-
-setup_logger("soul-snatch")
-
 import slskd_api
 from rich.progress import track
 

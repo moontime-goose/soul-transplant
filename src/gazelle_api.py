@@ -4,14 +4,14 @@ from typing import Iterable
 
 import requests as reqs
 import requests_cache
-from ratelimit import limits, sleep_and_retry
+from ratelimit import limits
 
 import src.app as app
 from src.model import Album, GroupDetails, SearchResult, TorrentDetails
 from src.soul_config import Config
-from src.utils import *
+from src.utils import sleep_and_retry
 
-logger = app.get_logger()
+logger = logging.getLogger(app.LIB_LOGGER_NAME)
 
 
 class Tracker:

@@ -1,18 +1,12 @@
-from concurrent.futures import CancelledError
-from typing import Optional
-
-from click.termui import progressbar
-
-from src.logger import *
-
-setup_logger("soul-transplant")
-
 import argparse
+import logging
 import os
 import os.path
 import signal
 import sys
 import time
+from concurrent.futures import CancelledError
+from typing import Optional
 
 import qbittorrentapi
 import rich.prompt as prompt
@@ -20,19 +14,18 @@ import torf
 import yaml
 from qbittorrentapi import TorrentState
 from rich import print
-from rich.progress import Progress, Task, TaskID
-from yaml.parser import ParserError
+from rich.progress import Progress, TaskID
 
 import src.app as app
 import src.gazelle_api as gazelle_api
 import src.soul_config as soul_config
-from src.model import FilelistEntry
-from src.soul_config import Config, TorrentClient
+from src.logger import get_handler
+from src.soul_config import Config
 from src.soul_shard import Shard
-from src.utils import *
+from src.utils import cache_path
 
 # Get logger instance
-logger = get_logger()
+logger = logging.getLogger("soul-transplant")
 
 
 def signal_handler(sig, frame):
@@ -111,9 +104,9 @@ def main():
         except FileNotFoundError as e:
             logger.warning("%s: could not repair torrent contents, skip: %s", shard_path, e)
             continue
-        except IsADirectoryError as e:
+        except IsADirectoryError:
             logger.warning("%s: target directory already exists, skip", shard_path)
-        except CancelledError as e:
+        except CancelledError:
             logger.info("%s: cancelled repair, skip", shard_path)
             continue
         except ValueError as e:

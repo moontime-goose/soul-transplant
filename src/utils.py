@@ -7,10 +7,10 @@ from ratelimit import RateLimitException
 from rich.prompt import Confirm
 from xdg_base_dirs import xdg_cache_home, xdg_config_home
 
-import src.app as app
+from src.app import LIB_LOGGER_NAME
 from src.soul_config import Config
 
-logger = app.get_logger()
+logger = logging.getLogger(LIB_LOGGER_NAME)
 
 
 def flatten(xss):
@@ -81,3 +81,7 @@ class SleepAndRetryDecorator(object):
 
 
 sleep_and_retry = SleepAndRetryDecorator
+
+
+def to_percentage(x: float) -> int:
+    return int(round(x * 100))

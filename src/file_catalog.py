@@ -1,13 +1,17 @@
 import abc
+import logging
 from typing import Any, Iterable, Iterator
 
 import click
 import qbittorrentapi
 
 import src.soul_shard as soul_shard
+from src.app import LIB_LOGGER_NAME
 from src.model import Album, Filelist
-from src.soul_config import CatalogConfig, Config
-from src.utils import *
+from src.soul_config import Config
+from src.utils import prompt_yes_no
+
+logger = logging.getLogger(LIB_LOGGER_NAME)
 
 
 class FileCatalog(abc.ABC):

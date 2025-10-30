@@ -9,17 +9,13 @@ import logging
 
 import rich.logging
 
-_logger = None
+from src.app import LIB_LOGGER_NAME
 
 
-def setup_logger(name):
-    global _logger
-
-    if _logger is not None:
-        return
-
-    logger = logging.getLogger(name)
-    _logger = logger
+def setup_logger(log_dev=False):
+    logger = logging.getLogger(LIB_LOGGER_NAME)
+    logger.addHandler(get_handler(log_dev))
+    return logger
 
 
 def get_handler(log_dev=False):
@@ -27,9 +23,3 @@ def get_handler(log_dev=False):
         return rich.logging.RichHandler(show_time=False, markup=True, show_path=True)
     else:
         return rich.logging.RichHandler(show_time=False, markup=True, show_path=False)
-
-
-def get_logger() -> logging.Logger:
-    global _logger
-    assert _logger is not None
-    return _logger
