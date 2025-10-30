@@ -5,6 +5,7 @@ from src.logger import get_handler, setup_logger
 setup_logger("soul-snatch")
 
 import slskd_api
+from rich.progress import track
 
 import src.soul_config as soul_config
 
@@ -17,7 +18,7 @@ def main():
         config.soulseek_client.api_key,
     )
     searches = slskd.searches.get_all()
-    for s in searches:
+    for s in track(searches, description="Clearing search cache..."):
         slskd.searches.delete(s["id"])
 
 

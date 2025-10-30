@@ -71,6 +71,7 @@ class Config(BaseModel):
     cache_expire_after: int = Field(default=7 * 24 * 60 * 60, ge=0)  # 7 days in seconds
 
     skip_incomplete_downloads: bool = True
+    verify_before_import: bool = False
 
 
 def make_config(args=None) -> dict:

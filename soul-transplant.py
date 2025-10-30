@@ -138,14 +138,17 @@ def main():
             logger.info("'%s' already exists in qbit", existing_hashes[t.infohash]["name"])
             continue
 
-        percentage_valid, size = verify_torrent(t, shard)
-        logger.info(
-            "%s: torrent is %.02f%% complete, %.02f MB left to download",
-            path,
-            percentage_valid,
-            (size * percentage_valid / 100) / 1048576,
-        )
-        if percentage_valid == 100 or prompt.Confirm.ask("Submit to qBittorrent?"):
+        if config.verify_before_import:
+            percentage_valid, size = verify_torrent(t, shard)
+            logger.info(
+                "%s: torrent is %.02f%% complete, %.02f MB left to download",
+                path,
+                percentage_valid,
+                (size * (100.0 - percentage_valid) / 100) / 1048576,
+            )
+            if percentage_valid == 100 or prompt.Confirm.ask("Submit to qBittorrent?"):
+                new_torrents[t.infohash] = path
+        else:
             new_torrents[t.infohash] = path
 
     logger.info("Got %d new torrents to add", len(new_torrents))
@@ -260,15 +263,16 @@ def ensure_torrent_content_structure(download_folder, shard: Shard):
             if not os.path.exists(src):
                 raise FileNotFoundError(src)
 
-            if src != dst and src.lower() == dst.lower():
-                rename_arguments.append((src, f"{src}.bkp"))
-                rename_arguments.append((f"{src}.bkp", dst))
-            else:
-                rename_arguments.append((src, dst))
+            if src != dst:
+                if src.lower() == dst.lower():
+                    rename_arguments.append((src, f"{src}.bkp"))
+                    rename_arguments.append((f"{src}.bkp", dst))
+                else:
+                    rename_arguments.append((src, dst))
 
     if download_folder != shard.reference_folder:
-        src = download_folder + "/"
-        dst = shard.reference_folder + "/"
+        src = download_folder
+        dst = shard.reference_folder
 
         if os.path.exists(dst):
             logger.warning("Folder with the original name already exists, skip")
@@ -276,7 +280,7 @@ def ensure_torrent_content_structure(download_folder, shard: Shard):
 
         rename_arguments.append((src, dst))
 
-    if rename_arguments:
+    if len(rename_arguments) > 0:
         logger.info("Queued rename operations:")
         for src, dst in rename_arguments:
             logger.info("%-36s -> %-36s", os.path.basename(src), os.path.basename(dst))
@@ -334,8 +338,8 @@ class TorrentVerifyCallback:
     progress: Progress = Progress()
     task: TaskID
 
-    def __init__(self, name):
-        self.progress.start()
+    def __init__(self, name, progress):
+        self.progress = progress
         self.task = self.progress.add_task(name)
 
     def __call__(
@@ -348,32 +352,25 @@ class TorrentVerifyCallback:
         piece_sha: Optional[bytes],
         exception: Optional[torf.TorfError],
     ):
+        self.progress.update(self.task, total=pieces_total, advance=1)
         if exception is None:
-            self.progress.update(self.task, total=pieces_total, advance=1)
             self.pieces_valid += 1
-        elif not isinstance(exception, torf.MetainfoError) and not isinstance(
-            exception, torf.ReadError
-        ):
-            raise exception
         else:
-            self.progress.update(self.task, total=pieces_total, advance=1)
             self.pieces_invalid += 1
-
-        if index == pieces_total - 1:
-            self.progress.stop_task(self.task)
 
 
 def verify_torrent(t: torf.Torrent, shard: Shard) -> tuple[float, int]:
     try:
-        cb = TorrentVerifyCallback(t.name[:40] if t.name else "Progress")
-        t.verify(shard.reference_folder, callback=cb, interval=0)
+        with Progress() as progress:
+            cb = TorrentVerifyCallback(t.name[:40] if t.name else "Progress", progress)
+            t.verify(shard.reference_folder, callback=cb, interval=0)
 
         return (cb.pieces_valid * 100.0 / (cb.pieces_valid + cb.pieces_invalid), t.size)
     except torf.TorfError as e:
         # These are downloaded, not created. If the torrent file from the
         # tracker is bad somehow, there may be bigger issues, bail altogeter
         logger.error("Unexpected error on torrent contente validation: %s", e)
-        exit(1)
+        raise e
 
 
 if __name__ == "__main__":
