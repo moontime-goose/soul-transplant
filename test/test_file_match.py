@@ -1,6 +1,6 @@
 import pytest
 
-from src.file_match import file_entry_similarity
+from src.file_match import music_file_entry_similarity
 from src.model import Album, FilelistEntry
 
 
@@ -20,7 +20,7 @@ class TestFileMatch:
 
     @pytest.mark.parametrize("album,reference,candidate", TESTDATA_BASIC_FILE_MATCH)
     def test_basic_file_match(self, album, reference, candidate):
-        assert file_entry_similarity(album, reference, candidate) == 100
+        assert music_file_entry_similarity(album, reference, candidate) == 100
 
     # Case mismatch is a minor issue, score should be high
     TESTDATA_FILE_CASE_MATCH = [
@@ -43,7 +43,7 @@ class TestFileMatch:
 
     @pytest.mark.parametrize("album,reference,candidate", TESTDATA_FILE_CASE_MATCH)
     def test_file_case_match(self, album, reference, candidate):
-        similarity = file_entry_similarity(album, reference, candidate)
+        similarity = music_file_entry_similarity(album, reference, candidate)
         assert similarity >= 85
         assert similarity < 100
 
@@ -73,7 +73,7 @@ class TestFileMatch:
 
     @pytest.mark.parametrize("album,reference,candidate", TESTDATA_FILE_TYPO_MATCH)
     def test_file_typo_match(self, album, reference, candidate):
-        similarity = file_entry_similarity(album, reference, candidate)
+        similarity = music_file_entry_similarity(album, reference, candidate)
         assert similarity >= 80
 
     # Multiple typos are worse, but still a possible match as long as the strings are close enough
@@ -102,7 +102,7 @@ class TestFileMatch:
 
     @pytest.mark.parametrize("album,reference,candidate", TESTDATA_FILE_TYPOS_MATCH)
     def test_file_typos_match(self, album, reference, candidate):
-        similarity = file_entry_similarity(album, reference, candidate)
+        similarity = music_file_entry_similarity(album, reference, candidate)
         assert similarity >= 70
         assert similarity <= 85
 
@@ -151,7 +151,7 @@ class TestFileMatch:
 
     @pytest.mark.parametrize("album,reference,candidate", TESTDATA_FILE_NAMING_SCHEME_MATCH)
     def test_file_naming_scheme_match(self, album, reference, candidate):
-        similarity = file_entry_similarity(album, reference, candidate)
+        similarity = music_file_entry_similarity(album, reference, candidate)
         assert similarity >= 50
 
     # Whitespace may also vary, which is somewhat more acceptable than typos
@@ -206,7 +206,7 @@ class TestFileMatch:
 
     @pytest.mark.parametrize("album,reference,candidate", TESTDATA_FILE_NAMING_SCHEME_MATCH)
     def test_file_whitespace_match(self, album, reference, candidate):
-        similarity = file_entry_similarity(album, reference, candidate)
+        similarity = music_file_entry_similarity(album, reference, candidate)
         assert similarity >= 50
 
     # Entirely different names should hopefully produce less-than-likely similiarity
@@ -254,7 +254,7 @@ class TestFileMatch:
 
     @pytest.mark.parametrize("album,reference,candidate", TESTDATA_FILE_TRACK_MISMATCH)
     def test_file_track_mismatch(self, album, reference, candidate):
-        similarity = file_entry_similarity(album, reference, candidate)
+        similarity = music_file_entry_similarity(album, reference, candidate)
         assert similarity <= 50
 
     # Mismatching sizes are hard-stop
@@ -279,7 +279,7 @@ class TestFileMatch:
 
     @pytest.mark.parametrize("album,reference,candidate", TESTDATA_FILE_SIZE_MISMATCH)
     def test_file_size_mismatch(self, album, reference, candidate):
-        similarity = file_entry_similarity(album, reference, candidate)
+        similarity = music_file_entry_similarity(album, reference, candidate)
         assert similarity == 0
 
     # Matching extensions with same basename are full match, regardless of case
@@ -298,7 +298,7 @@ class TestFileMatch:
 
     @pytest.mark.parametrize("album,reference,candidate", TESTDATA_FILE_EXT_MATCH)
     def test_file_ext_match(self, album, reference, candidate):
-        similarity = file_entry_similarity(album, reference, candidate)
+        similarity = music_file_entry_similarity(album, reference, candidate)
         assert similarity == 100
 
     # Mismatching extensions are hard-stop
@@ -332,5 +332,5 @@ class TestFileMatch:
 
     @pytest.mark.parametrize("album,reference,candidate", TESTDATA_FILE_EXT_MISMATCH)
     def test_file_ext_mismatch(self, album, reference, candidate):
-        similarity = file_entry_similarity(album, reference, candidate)
+        similarity = music_file_entry_similarity(album, reference, candidate)
         assert similarity == 0

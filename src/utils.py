@@ -4,6 +4,7 @@ import time
 from functools import wraps
 
 from ratelimit import RateLimitException
+from rich.progress import track
 from rich.prompt import Confirm
 from xdg_base_dirs import xdg_cache_home, xdg_config_home
 
@@ -85,3 +86,10 @@ sleep_and_retry = SleepAndRetryDecorator
 
 def to_percentage(x: float) -> int:
     return int(round(x * 100))
+
+
+def maybe_progress_bar(iterable, config: Config, **kwargs):
+    if config.unattended:
+        return track(iterable, **kwargs)
+    else:
+        return iterable

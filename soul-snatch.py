@@ -14,7 +14,6 @@ from typing import Iterable
 import requests
 import yaml
 from rich import print
-from rich.progress import track
 
 import src.app as app
 import src.gazelle_api as gazelle_api
@@ -34,7 +33,7 @@ from src.logger import get_handler
 from src.model import Album, Filelist
 from src.search import make_search_strings
 from src.soul_config import CatalogConfig, Config
-from src.utils import prompt_yes_no
+from src.utils import maybe_progress_bar, prompt_yes_no
 
 logger = logging.getLogger("soul-snatch")
 
@@ -240,8 +239,11 @@ def process_album_search(
     is_response_limit_reached = False
 
     done_list: list[Filelist] = []
-    for supplier_result_fut in track(
-        as_completed(supplier_results), description="General search", total=len(supplier_results)
+    for supplier_result_fut in maybe_progress_bar(
+        as_completed(supplier_results),
+        config,
+        description="General search",
+        total=len(supplier_results),
     ):
         (state, filelists) = supplier_result_fut.result()
         for catalog_card in catalog_results:
@@ -288,8 +290,8 @@ def process_album_search(
     ]
 
     # Handle completion and results for folder searches
-    for fut in track(
-        as_completed(folder_results), description="Folder search", total=len(folder_results)
+    for fut in maybe_progress_bar(
+        as_completed(folder_results), config, description="Folder search", total=len(folder_results)
     ):
         catalog_card, (_, filelists) = fut.result()
         is_enqueued = process_search(config, album, catalog, supplier, catalog_card, filelists)
@@ -427,6 +429,7 @@ def drop_shard(config: Config, catalog: FileCatalog, download_match: FilelistMat
                 reference_size=file_match.reference.size,
             )
             for file_match in download_match.files
+            if file_match.suggested is not None
         ]
         catalog_id = catalog.make_catalog_download_id(download_match.reference_list)
         reference_folder = path.join(

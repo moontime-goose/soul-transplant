@@ -60,9 +60,9 @@ class Config(BaseModel):
     # Catalog configuration
     catalogs: List[CatalogConfig] = Field(..., min_length=1, max_length=1)
 
-    confident: bool = True
+    confident: bool = False
     timid: bool = False
-    unattended: bool = True
+    unattended: bool = False
 
     # Optional configuration with defaults
     max_cache_age_minutes: int = Field(default=4320, ge=0)

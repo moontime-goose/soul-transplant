@@ -38,3 +38,6 @@ split_on_trailing_comma = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+line-length = 100
