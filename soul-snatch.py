@@ -12,9 +12,9 @@ from os import path
 from typing import Iterable
 
 import requests
-import tqdm
 import yaml
 from rich import print
+from rich.progress import track
 
 import src.app as app
 import src.gazelle_api as gazelle_api
@@ -164,7 +164,8 @@ def main():
     logger.setLevel(args.loglevel.upper())
     logger.addHandler(get_handler(args.log_dev))
 
-    soul_logger.setup_logger(args.log_dev)
+    lib_logger = soul_logger.setup_logger(args.log_dev)
+    lib_logger.setLevel(args.loglevel.upper())
 
     if args.log_dev:
         logging.getLogger("urllib3").setLevel(args.log_dev.upper())
@@ -239,8 +240,8 @@ def process_album_search(
     is_response_limit_reached = False
 
     done_list: list[Filelist] = []
-    for supplier_result_fut in tqdm.tqdm(
-        as_completed(supplier_results), desc="General search", total=len(supplier_results)
+    for supplier_result_fut in track(
+        as_completed(supplier_results), description="General search", total=len(supplier_results)
     ):
         (state, filelists) = supplier_result_fut.result()
         for catalog_card in catalog_results:
@@ -287,8 +288,8 @@ def process_album_search(
     ]
 
     # Handle completion and results for folder searches
-    for fut in tqdm.tqdm(
-        as_completed(folder_results), desc="Folder search", total=len(folder_results)
+    for fut in track(
+        as_completed(folder_results), description="Folder search", total=len(folder_results)
     ):
         catalog_card, (_, filelists) = fut.result()
         is_enqueued = process_search(config, album, catalog, supplier, catalog_card, filelists)
