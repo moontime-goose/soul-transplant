@@ -223,7 +223,10 @@ def ensure_download_complete(config: Config, download_folder: str, shard: Shard)
         size = os.path.getsize(existing_file)
         if os.path.getsize(existing_file) != reference_size:
             logger.warning(
-                "Suspicious file size for %s: %d, but expected", existing_file, size, reference_size
+                "Suspicious file size for %s: %d, but expected %d",
+                existing_file,
+                size,
+                reference_size,
             )
             return False
 

@@ -80,7 +80,7 @@ class Tracker:
         while True:
             params["page"] = current_page
 
-            body = self.make_request(params)
+            body = self.make_json_request(params)
 
             # may be 0 with no responses
             page_count = body["response"].get("pages", 1)
@@ -112,7 +112,7 @@ class Tracker:
         torrents in the group)
         """
 
-        body = self.make_request({"action": "torrentgroup", "id": group_id})
+        body = self.make_json_request({"action": "torrentgroup", "id": group_id})
         details = GroupDetails.model_validate(body["response"])
 
         return details
@@ -122,7 +122,7 @@ class Tracker:
         Request torrent details for the given id (notably, file listing)
         """
 
-        body = self.make_request({"action": "torrent", "id": torrent_id})
+        body = self.make_json_request({"action": "torrent", "id": torrent_id})
         details = TorrentDetails.model_validate(body["response"])
 
         return details
@@ -132,11 +132,14 @@ class Tracker:
         Download .torrent file and save it to given file
         """
 
-        resp = reqs.get(
+        request = reqs.Request(
+            "GET",
             f"{self.tracker_url}/ajax.php",
             headers={"Authorization": self.tracker_api_key},
             params={"action": "download", "id": torrent_id},
-        )
+        ).prepare()
+
+        resp = self.send_ratelimited_request(request)
 
         resp.raise_for_status()
 
@@ -145,7 +148,7 @@ class Tracker:
                 if chunk:
                     f.write(chunk)
 
-    def make_request(self, params) -> dict:
+    def make_json_request(self, params) -> dict:
         """
         Primary way to make request for mostly static data on the tracker.
         Caches successful responses to avoid repeating request to tracker later.

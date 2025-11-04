@@ -169,8 +169,10 @@ def main():
     if args.log_dev:
         logging.getLogger("urllib3").setLevel(args.log_dev.upper())
         logging.getLogger("urllib3").addHandler(get_handler(log_dev=True))
+
         logging.getLogger("requests").setLevel(args.log_dev.upper())
         logging.getLogger("requests").addHandler(get_handler(log_dev=True))
+
         logging.getLogger("requests_cache").setLevel(args.log_dev.upper())
         logging.getLogger("requests_cache").addHandler(get_handler(log_dev=True))
 

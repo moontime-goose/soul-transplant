@@ -36,8 +36,5 @@ line-length = 100
 line_length = 100
 split_on_trailing_comma = true
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
 [tool.ruff]
 line-length = 100

@@ -89,7 +89,7 @@ def get_catalog_results(config: Config, album: Album, catalog: FileCatalog) -> I
     return catalog_results
 
 
-def reject_if_torrent_exists(config: Config, filelists: Iterable[Filelist]):
+def reject_if_torrent_exists(config: Config, filelists: Iterable[Filelist]) -> Iterator[Filelist]:
     qbit_config = config.torrent_clients[0]
     qbit_client = qbittorrentapi.Client(
         host=qbit_config.host,
