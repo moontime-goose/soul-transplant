@@ -20,7 +20,7 @@ import src.gazelle_api as gazelle_api
 import src.logger as soul_logger
 import src.soul_config as soul_config
 import src.soul_shard as soul_shard
-import src.suppliers.soulseek as soulseek
+import src.suppliers.slskd as slskd
 from src.catalogs.gazelle_catalog import GazelleCatalog
 from src.file_catalog import FileCatalog, get_catalog_results
 from src.file_match import (
@@ -31,9 +31,8 @@ from src.file_match import (
 from src.file_supplier import FileSupplier
 from src.logger import get_handler
 from src.model import Album, Filelist
-from src.search import make_search_strings
 from src.soul_config import CatalogConfig, Config
-from src.utils import maybe_progress_bar, prompt_yes_no
+from src.utils import prompt_yes_no
 
 logger = logging.getLogger("soul-snatch")
 
@@ -180,7 +179,7 @@ def main():
         logger.warning("Multiple catalogs are not yet supported, using the first one")
 
     tracker_catalog = make_catalog(config, config.catalogs[0])
-    slskd_supplier = soulseek.SlskdApi(config)
+    slskd_supplier = slskd.SlskdApi(config)
 
     albums = parse_albumlist(args.input_file)
     for album in albums:
@@ -223,41 +222,26 @@ def process_album_search(
     logger.info("%s: have at least one catalog result, search supplier", album)
     catalog_results = itertools.chain([peeked], catalog_results)
 
-    thread_pool = ThreadPoolExecutor(max_workers=8)
-
-    search_strings = make_search_strings(album)
-
-    # Cast a wide net. Generic queries will work of less popular stuff, where
-    # number of files in responses comes under souiseek server limit (which
-    # comes at under 300 users and 2000-5000 files found, as configured currently).
-    supplier_results = [
-        thread_pool.submit(lambda s=s: supplier.perform_search(s)) for s in search_strings
-    ]
+    supplier_results = supplier.search_album(album)
     catalog_results = list(catalog_results)
 
-    # If this occurs, then more specific queries might help. I haven't found any
-    # documentation on soulseek query syntax (if any), so try searching for
-    # folder names instead.
-    is_response_limit_reached = False
-
     done_list: list[Filelist] = []
-    for supplier_result_fut in maybe_progress_bar(
-        as_completed(supplier_results),
-        config,
-        description="General search",
-        total=len(supplier_results),
-    ):
-        (state, filelists) = supplier_result_fut.result()
+    for filelist in supplier_results:
         for catalog_card in catalog_results:
-            if state == FileSupplier.SearchStatus.LIMIT_REACHED:
-                is_response_limit_reached = True
             if any(done.folder_name == catalog_card.folder_name for done in done_list):
-                logger.info("%s: target folder already exists, skip", catalog_card.folder_name)
+                logger.debug("%s: target folder already exists, skip", catalog_card.folder_name)
+                continue
 
-            is_enqueued = process_search(config, album, catalog, supplier, catalog_card, filelists)
+            is_enqueued = process_search(config, album, catalog, supplier, catalog_card, filelist)
 
             if is_enqueued:
                 done_list.append(catalog_card)
+                if not prompt_yes_no(
+                    config, f"Continue search for folder {catalog_card.folder_name}?", default=True
+                ):
+                    return
+                else:
+                    break
 
     # Maybe, try search for folder names specifically. This is no silver bullet,
     # soulseek has been adding extra stuff even if query uses quotes to try
@@ -265,14 +249,11 @@ def process_album_search(
     # north of 20 different folder names to look up. Searches below will be
     # rate-limited often
 
-    if not should_search_by_folder_names(
-        config, is_response_limit_reached, album, len(catalog_results) - len(done_list)
-    ):
-        logger.info("Matched %d torrent to soulseek", len(done_list))
-        # Done with this album
+    if (not config.search_folder_names) or len(catalog_results) == len(done_list):
+        logger.info("Matched %d catalog results to supplier(s)", len(done_list))
         return
 
-    # More specific searched. No ideas other than folder names at the moment
+    # Search by exact folder names.
 
     retry_list = [card for card in catalog_results if card not in done_list]
     folder_map: defaultdict[str, list[Filelist]] = defaultdict(list)
@@ -280,10 +261,10 @@ def process_album_search(
     for catalog_card in retry_list:
         folder_map[catalog_card.folder_name].append(catalog_card)
 
-    logger.info("Matched %d torrents, try %d folder name searches", len(done_list), len(folder_map))
-
     def search_task(supplier, folder, card):
         return (card, supplier.perform_search(folder))
+
+    thread_pool = ThreadPoolExecutor(max_workers=8)
 
     folder_results = [
         thread_pool.submit(partial(search_task, supplier, folder, card))
@@ -292,16 +273,20 @@ def process_album_search(
     ]
 
     # Handle completion and results for folder searches
-    for fut in maybe_progress_bar(
-        as_completed(folder_results), config, description="Folder search", total=len(folder_results)
-    ):
+    for fut in as_completed(folder_results):
         catalog_card, (_, filelists) = fut.result()
-        is_enqueued = process_search(config, album, catalog, supplier, catalog_card, filelists)
-        if is_enqueued:
-            done_list.append(catalog_card)
-            break
+        for filelist in filelists:
+            is_enqueued = process_search(config, album, catalog, supplier, catalog_card, filelists)
+            if is_enqueued:
+                done_list.append(catalog_card)
+                if not prompt_yes_no(
+                    config, f"Continue search for folder {catalog_card.folder_name}?", default=True
+                ):
+                    return
+                else:
+                    break
 
-    logger.info("Matched %d total torrents to soulseek", len(done_list))
+    logger.info("Matched %d catalog results to supplier(s)", len(done_list))
     thread_pool.shutdown()
 
 
@@ -311,74 +296,70 @@ def process_search(
     catalog: FileCatalog,
     supplier: FileSupplier,
     reference_list: Filelist,
-    filelists: list[Filelist],
+    filelist: Filelist,
 ) -> bool:
     """
-    Decide whether files from given responses can be used, and enqueue a (1)
-    download if there are matching files.
+    Decide whether files from given response can be used, and enqueue a
+    download if there is a match.
     """
 
-    for filelist in filelists:
-        folder_match = attempt_filelist_match(
-            album, filelist, reference_list, media_format=config.media_format
-        )
-        if folder_match is None:
-            continue
+    folder_match = attempt_filelist_match(
+        album, filelist, reference_list, media_format=config.media_format
+    )
 
-        if not supplier.is_downloadable(folder_match):
-            continue
+    if folder_match is None:
+        return False
 
+    if not supplier.is_downloadable(folder_match):
+        return False
+
+    logger.info(
+        "MATCH: catalog  - %s",
+        catalog.format_meta_link(folder_match.reference_list),
+    )
+
+    logger.info(
+        "MATCH: supplier - %s",
+        supplier.format_list_oneline(folder_match.download_list),
+    )
+
+    # Download might enqueue-able at this point, confirm with user
+    if not prompt_match_confirmation(
+        config,
+        folder_match,
+        f"[on green]MATCH[/]: {supplier.format_list_oneline(folder_match.download_list)}. Accept?",
+    ):
+        return False
+
+    try:
+        drop_shard(config, catalog, folder_match)
+    except FileExistsError:
         logger.info(
-            "MATCH: catalog  - %s",
-            catalog.format_meta_link(folder_match.reference_list),
+            "[on green]MATCH[/]: '%s' skip: target directory %s already exists",
+            reference_list.folder_name,
         )
+        return False
 
-        logger.info(
-            "MATCH: supplier - %s",
-            supplier.format_list_oneline(folder_match.download_list),
-        )
+    try:
+        status, _ = supplier.enqueue_download(folder_match.download_list)
+        if status == FileSupplier.DownloadStatus.SCHEDULED:
+            download_username = filelist.meta["username"]
 
-        # Download might enqueue-able at this point, confirm with user
-        if not prompt_match_confirmation(
-            config,
-            folder_match,
-            f"[on green]MATCH[/]: {supplier.format_list_oneline(folder_match.download_list)}. Accept?",
-        ):
-            continue
-
-        try:
-            drop_shard(config, catalog, folder_match)
-        except FileExistsError:
             logger.info(
-                "[on green]MATCH[/]: '%s' skip: target directory %s already exists",
-                reference_list.folder_name,
+                "[black on blue]%s[/], thanks! %s found",
+                download_username,
+                filelist.folder_name,
             )
-            continue
 
-        try:
-            status, _ = supplier.enqueue_download(folder_match.download_list)
-            if status == FileSupplier.DownloadStatus.SCHEDULED:
-                download_username = filelist.meta["username"]
-
-                logger.info(
-                    "[black on blue]%s[/], thanks! %s found",
-                    download_username,
-                    filelist.folder_name,
-                )
-
-                return True
-        except requests.HTTPError as e:
-            # This is not necessarily an error, large amount of files enqueued
-            # from the same user might result in slskd instance, or remote
-            # user's soulseek client hitting one of its limits (like number of
-            # upload slots, fiels enqueued, or transfer limit). If slskd is
-            # running, all those files are likely enqueued, even if with an
-            # error status, and slskd seems to handle retries in this cases
-            logger.warning("slskd returned an error, check the UI: %s", e)
-            if not prompt_yes_no(
-                config, f"Continue search for folder {reference_list.folder_name}?", default=True
-            ):
-                break
+            return True
+    except requests.HTTPError as e:
+        # This is not necessarily an error, large amount of files enqueued
+        # from the same user might result in slskd instance, or remote
+        # user's soulseek client hitting one of its limits (like number of
+        # upload slots, fiels enqueued, or transfer limit). If slskd is
+        # running, all those files are likely enqueued, even if with an
+        # error status, and slskd seems to handle retries in this cases
+        logger.warning("slskd returned an error, check the UI: %s", e)
 
     return False
 
@@ -459,18 +440,6 @@ def parse_albumlist(filename):
 
     j_list = json.load(open(filename))
     return [Album.model_validate(a) for a in j_list]
-
-
-def should_search_by_folder_names(
-    config: Config, is_response_limit_reached: bool, album: Album, folder_count: int
-) -> bool:
-    if config.search_folder_names:
-        return True
-    elif is_response_limit_reached:
-        prompt = f"Hit response limit. Search soulseek for {album} by {folder_count} folder names?"
-        return prompt_yes_no(config, prompt, default=True)
-
-    return False
 
 
 def make_catalog(config: Config, catalog: CatalogConfig) -> FileCatalog:

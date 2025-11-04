@@ -1,8 +1,21 @@
 import abc
 from enum import Enum
-from typing import Any
+from typing import Any, Iterable
 
 from src.file_match import Filelist, FilelistMatch
+from src.model import Album
+
+
+class SearchException(Exception):
+    """Base exception for search operations"""
+
+    pass
+
+
+class SearchFailedException(SearchException):
+    """Raised when search fails"""
+
+    pass
 
 
 class FileSupplier(abc.ABC):
@@ -23,10 +36,20 @@ class FileSupplier(abc.ABC):
         FAILED = 2
 
     @abc.abstractmethod
-    def perform_search(self, search_str: str) -> tuple[SearchStatus, list[Filelist]]:
+    def search_album(self, album: Album) -> Iterable[Filelist]:
+        """
+        Search for albums and yield filelists. May raise search exceptions.
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def search_text(self, search_str: str) -> Iterable[Filelist]:
         """
         Search for files by a given string. Provider may adapt the string to be
         more efficient depending on search functionality.
+
+        Raises:
+            SearchFailedException: When search fails
         """
         raise NotImplementedError()
 
@@ -41,8 +64,19 @@ class FileSupplier(abc.ABC):
 
     @abc.abstractmethod
     def is_downloadable(self, folder_match: FilelistMatch) -> bool:
+        """
+        Return true if the supplier can successfully download list of files
+        specified by folder_match.
+
+        At the moment, this is a carve-out for slskd which can only download
+        flat folders
+        """
         raise NotImplementedError()
 
     @abc.abstractmethod
     def format_list_oneline(self, filelist: Filelist) -> str:
+        """
+        Return a print()able string which describes the filelist obtained from
+        this supplier
+        """
         raise NotImplementedError()

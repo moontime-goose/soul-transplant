@@ -1,17 +1,18 @@
 import logging
-import random
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from os import path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 import slskd_api
 from ratelimit import limits
 
 from src.app import LIB_LOGGER_NAME
 from src.file_match import FilelistMatch
-from src.file_supplier import FileSupplier
-from src.model import Filelist, FilelistEntry
+from src.file_supplier import FileSupplier, SearchFailedException
+from src.model import Album, Filelist, FilelistEntry
+from src.search import make_search_strings
 from src.soul_config import Config
 from src.utils import sleep_and_retry
 
@@ -29,8 +30,28 @@ class SlskdApi(FileSupplier):
         self.config = config
         self.lock = threading.Lock()
 
-    def perform_search(self, search_str: str) -> tuple[FileSupplier.SearchStatus, list[Filelist]]:
-        MAX_SLEEP_MS = 20000
+    def search_album(self, album: Album) -> Iterable[Filelist]:
+        thread_pool = ThreadPoolExecutor(max_workers=8)
+        search_strings = make_search_strings(album)
+
+        # Cast a wide net. Generic queries will work of less popular stuff, where
+        # number of files in responses comes under souiseek server limit (which
+        # comes at under 300 users and 2000-5000 files found, as configured currently).
+        supplier_results = [
+            thread_pool.submit(lambda s=s: list(self.search_text(s))) for s in search_strings
+        ]
+
+        # If this occurs, then more specific queries might help. I haven't found any
+        # documentation on soulseek query syntax (if any), so try searching for
+        # folder names instead.
+
+        for supplier_result_fut in as_completed(supplier_results):
+            filelists = supplier_result_fut.result()
+            for fl in filelists:
+                yield fl
+
+    def search_text(self, search_str: str) -> Iterable[Filelist]:
+        MAX_SLEEP_MS = 15000
         CHECK_INTERVAL_MS = 100
 
         with self.lock:
@@ -46,11 +67,18 @@ class SlskdApi(FileSupplier):
                 # "Completed", "InProgress", "ResponseLimitReached". Latter one could be
                 # considered to decide on whether searches should be
                 # repeated/rephrased/etc
-                if "Complete" in state["state"]:
+                if (
+                    "Complete" in state["state"]
+                    or "Fail" in state["state"]
+                    or "Error" in state["state"]
+                ):
                     break
             time.sleep(CHECK_INTERVAL_MS / 1000.0)
 
         states = state["state"].split(", ")
+
+        if "Fail" in state["state"] or "Error" in state["state"]:
+            raise SearchFailedException
 
         ret_state = (
             FileSupplier.SearchStatus.LIMIT_REACHED
@@ -75,10 +103,14 @@ class SlskdApi(FileSupplier):
             states,
         )
 
-        responses = triage_responses(responses)
+        # Randomize, but prefer uploads with at least 1Mb/s up speed
+        responses.sort(
+            key=lambda r: r["uploadSpeed"] * (5 if r["hasFreeUploadSlot"] else 1), reverse=True
+        )
         responses = map(parse_slskd_response, responses)
 
-        return (ret_state, list(responses))
+        for response in responses:
+            yield response
 
     def enqueue_download(self, filelist: Filelist) -> tuple[FileSupplier.DownloadStatus, Any]:
         slskd_filelist = [f.meta["file"] for f in filelist.files]
@@ -111,6 +143,15 @@ class SlskdApi(FileSupplier):
                 "MATCH: '%s' skip: reference folder '%s' already exists, avoid rename conflict",
                 target_folder,
                 reference_folder,
+            )
+            return False
+
+        has_nested_folders = any("/" in entry.name for entry in folder_match.reference_list.files)
+
+        if has_nested_folders:
+            logger.info(
+                "MATCH: '%s' skip: slskdcannot download nested folders",
+                target_folder,
             )
             return False
 
@@ -178,17 +219,3 @@ def parse_slskd_response(response: dict) -> Filelist:
 
     filelist = Filelist(folder_name=".", files=files, meta={"username": response["username"]})
     return filelist
-
-
-def triage_responses(responses) -> list[dict]:
-    """
-    Rearrange responses in terms of likelihood of success (ignoring the
-    actual file listings), like upload speed/slots
-    """
-    responses = list(filter(lambda r: r["hasFreeUploadSlot"], responses))
-
-    # Randomize, but prefer uploads with at least 1Mb/s up speed
-    random.shuffle(responses)
-    responses.sort(key=lambda r: r["uploadSpeed"] > 1048576, reverse=True)
-
-    return responses

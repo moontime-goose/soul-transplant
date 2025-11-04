@@ -68,7 +68,7 @@ class Config(BaseModel):
     max_cache_age_minutes: int = Field(default=4320, ge=0)
     allow_trumpable: bool = False
     check_infohash: bool = False
-    search_folder_names: bool = False
+    search_folder_names: bool = True
     cache_expire_after: int = Field(default=7 * 24 * 60 * 60, ge=0)  # 7 days in seconds
 
     skip_incomplete_downloads: bool = True

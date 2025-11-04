@@ -118,15 +118,6 @@ def search_tracker_candidates(
     # Pre-check - after getting group torrents in bulk results should be filtered again
     torrent_results = filter(precheck_torrent_result, torrent_results)
 
-    torrent_results = filter(
-        lambda result: is_torrent_applicable(
-            config,
-            result,
-            link=tracker.format_torrent_link(result.torrent.id, group_id=result.group.id),
-        ),
-        torrent_results,
-    )
-
     return torrent_results
 
 
@@ -138,31 +129,6 @@ def is_group_applicable(config: Config, result: SearchResult, album: Album) -> b
     return normalize_query(result.artist.lower()) == normalize_query(
         album.artist.lower()
     ) and normalize_query(result.group_name.lower()) == normalize_query(album.name.lower())
-
-
-def is_torrent_applicable(config: Config, details: TorrentDetails, link=None) -> bool:
-    """Check if given torrent can be searched on soulseek."""
-
-    # slskd cannot download nested folders, it flattens the hierarchy instead.
-    # Since many folders in music albums are similarly named, like CD1, CD01,
-    # Artwork, etc., it's too much trouble to have it working at the moment, at
-    # least for general case. Skip them.
-
-    torrent = details.torrent
-
-    is_music_in_subfolders = any(
-        "/" in entry.name
-        for entry in torrent.file_list
-        if (not config.media_format or entry.name.endswith(config.media_format.lower()))
-    )
-
-    if is_music_in_subfolders:
-        logger.debug(
-            "Reject torrent %s : cannot download music files in subfolders", link or torrent.id
-        )
-        return False
-
-    return True
 
 
 def user_confirm_group(config: Config, candidate: TorrentDetails, link=None):
