@@ -48,7 +48,7 @@ def make_parser():
     Application parser configuration
     """
     parser = argparse.ArgumentParser(
-        prog="soul-transplant",
+        prog="soul-snatch",
         description="Search soulseek network for cross-seedable music albums",
     )
 

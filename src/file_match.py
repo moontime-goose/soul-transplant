@@ -63,7 +63,11 @@ class FilelistMatch:
 
 
 def attempt_filelist_match(
-    album: Album, suggestion_list: Filelist, reference_list: Filelist, media_format=None
+    album: Album,
+    suggestion_list: Filelist,
+    reference_list: Filelist,
+    media_format=None,
+    suggested_folder: Optional[str] = None,
 ) -> FilelistMatch | None:
     """
     Attempt to match torrent files entries to entries in a response from a
@@ -203,8 +207,11 @@ def attempt_filelist_match(
         files=download_music_info + folder_extra_file_names,
         meta=suggestion_list.meta,
     )
+
     list_match = FilelistMatch(
-        suggested_folder=os.path.basename(common_path),
+        suggested_folder=(
+            suggested_folder if suggested_folder is not None else os.path.basename(common_path)
+        ),
         files=file_matches,
         download_list=download_list,
         reference_list=reference_list,

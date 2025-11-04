@@ -51,7 +51,7 @@ class Torrent(BaseModel):
     info_hash: Optional[str] = None  # Only gettable from action=torrent
     format: str
     encoding: str
-    trumpable: bool
+    trumpable: bool = False
     file_list: Annotated[list[FilelistEntry], BeforeValidator(parse_filelist)]
     file_path: Annotated[str, BeforeValidator(html.unescape)]
     seeders: int
@@ -72,7 +72,7 @@ class TorrentResult(BaseModel):
     torrent_id: int
     snatches: int
     seeders: int
-    trumpable: bool
+    trumpable: bool = False
 
 
 class SearchResult(BaseModel):
@@ -97,6 +97,7 @@ class Group(BaseModel):
 
     id: int
     name: str
+    year: int
     music_info: dict
 
 

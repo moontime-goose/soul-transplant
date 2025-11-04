@@ -19,6 +19,7 @@ class CatalogConfig(BaseModel):
     url: HttpUrl
     type: str = Field(..., pattern="^(Gazelle)$")
     api_key: str = Field(exclude=True)
+    tracker_url: HttpUrl
 
 
 class PrefixMapping(BaseModel):
@@ -58,7 +59,7 @@ class Config(BaseModel):
     media_encoding: Optional[str] = None
 
     # Catalog configuration
-    catalogs: List[CatalogConfig] = Field(..., min_length=1, max_length=1)
+    catalogs: List[CatalogConfig] = Field(..., min_length=1)
 
     timid: bool = False
     unattended: bool = False

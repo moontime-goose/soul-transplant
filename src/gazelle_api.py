@@ -1,6 +1,6 @@
 import logging
 import sqlite3
-from typing import Iterable
+from typing import Iterable, Optional
 
 import requests as reqs
 import requests_cache
@@ -117,12 +117,21 @@ class Tracker:
 
         return details
 
-    def get_torrent_details(self, torrent_id: int) -> TorrentDetails:
+    def get_torrent_details(
+        self, id: Optional[int] = None, infohash: Optional[str] = None
+    ) -> TorrentDetails:
         """
         Request torrent details for the given id (notably, file listing)
         """
 
-        body = self.make_json_request({"action": "torrent", "id": torrent_id})
+        if (id is None) == (infohash is None):
+            raise ValueError("Exactly one of 'id' or 'infohash' must be provided")
+
+        if id is not None:
+            body = self.make_json_request({"action": "torrent", "id": id})
+        else:
+            body = self.make_json_request({"action": "torrent", "hash": infohash})
+
         details = TorrentDetails.model_validate(body["response"])
 
         return details

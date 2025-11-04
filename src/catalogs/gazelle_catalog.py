@@ -34,7 +34,12 @@ class GazelleCatalog(FileCatalog):
         """
 
         candidates = search_tracker_candidates(
-            self.config, self.tracker, album, self.config.media_format, self.config.media_encoding
+            self.config,
+            self.catalog,
+            self.tracker,
+            album,
+            self.config.media_format,
+            self.config.media_encoding,
         )
 
         filelists = [
@@ -78,13 +83,18 @@ class GazelleCatalog(FileCatalog):
 
 
 def search_tracker_candidates(
-    config: Config, tracker: gazelle_api.Tracker, album: Album, media_format, media_encoding
+    config: Config,
+    catalog: CatalogConfig,
+    tracker: gazelle_api.Tracker,
+    album: Album,
+    media_format,
+    media_encoding,
 ) -> Iterable[TorrentDetails]:
     """
     Get and pre-filter torrent candidates for given albums
     """
 
-    logger.info("Searching tracker for %s - %s", album.artist, album.name)
+    logger.info("Searching %s for %s - %s", catalog.id, album.artist, album.name)
 
     # Get group details for given search result group id
     def get_group_torrents(result):
