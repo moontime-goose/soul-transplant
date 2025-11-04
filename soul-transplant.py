@@ -62,7 +62,32 @@ def make_parser():
         help="Enable source locations, and logging for some of the libraries. ",
     )
 
+    parser.add_argument(
+        "--skip-incomplete",
+        action="store_true",
+        dest="skip_incomplete",
+        help="Automatically skip incomplete downloads (at least one file missing)",
+    )
+
+    parser.add_argument(
+        "--no-skip-incomplete",
+        action="store_false",
+        dest="skip_incomplete",
+        help="Prompt user on incomplete downloads",
+    )
     return parser
+
+
+def merge_config_arguments(config_data, args):
+    """
+    Resolve configuration overrides and finalize the config for this run
+    """
+    arg_values = vars(args)
+    for parameter in ["skip_incomplete"]:
+        if parameter in arg_values:
+            config_data[parameter] = arg_values[parameter]
+
+    return Config(**config_data)
 
 
 def main():
@@ -83,7 +108,7 @@ def main():
 
     logger.setLevel(args.loglevel.upper())
     try:
-        config = Config(**soul_config.make_config(args))
+        config = merge_config_arguments(soul_config.make_config(args), args)
     except FileNotFoundError:
         print("Config file not found, exit")
         sys.exit(1)

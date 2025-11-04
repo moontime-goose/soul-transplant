@@ -47,7 +47,7 @@ def maybe_prompt_select_results(
         config,
         f"{album}: edit {len(catalog_results)} results?",
         default=False,
-        force_user=not config.confident,
+        force_user=not config.unattended,
     ):
         return catalog_results
 

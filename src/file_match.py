@@ -399,10 +399,7 @@ def prompt_match_confirmation(config: Config, list_match: FilelistMatch, prompt)
     dir_similarity = list_match.folder_name_similarity()
     min_file_similarity = min(f.similarity for f in list_match.files)
 
-    if config.confident:
-        match_looks_good = dir_similarity > 50 and min_file_similarity > 50
-    else:
-        match_looks_good = dir_similarity == 100 and min_file_similarity == 100
+    match_looks_good = dir_similarity >= 90 and min_file_similarity >= 90
 
     return prompt_yes_no(
         config,

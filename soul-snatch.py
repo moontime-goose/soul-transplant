@@ -112,10 +112,19 @@ def make_parser():
     parser.add_argument(
         "--search-folder-names",
         action="store_true",
-        default=False,
+        dest="search_folder_names",
         help="""
         Search for albums by the original folder names known from tracker.
         May result in a lot of queries to soulseek and hitting ites rate limits
+        """,
+    )
+
+    parser.add_argument(
+        "--no-search-folder-names",
+        action="store_false",
+        dest="search_folder_names",
+        help="""
+        Do not search for albums by the original folder names known from tracker.
         """,
     )
 
@@ -132,6 +141,20 @@ def make_parser():
         help="Number of seconds after which responses from tracker and slskd are cached",
     )
 
+    parser.add_argument(
+        "--unattended",
+        action="store_true",
+        dest="unattended",
+        help="Make default decision on every user prompt",
+    )
+
+    parser.add_argument(
+        "--no-unattended",
+        action="store_false",
+        dest="unattended",
+        help="Force user prompts even if specified otherwise in config file",
+    )
+
     return parser
 
 
@@ -140,7 +163,7 @@ def merge_config_arguments(config_data, args):
     Resolve configuration overrides and finalize the config for this run
     """
     arg_values = vars(args)
-    for parameter in ["timid", "check_infohash", "search_folder_names"]:
+    for parameter in ["timid", "check_infohash", "search_folder_names", "unattended"]:
         if parameter in arg_values:
             config_data[parameter] = arg_values[parameter]
 
@@ -205,7 +228,7 @@ def process_album_search(
         f"Search for album: {album}?",
         default=True,
         log_auto=None,
-        force_user=not config.confident,
+        force_user=not config.unattended,
     ):
         return
 
