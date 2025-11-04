@@ -3,19 +3,19 @@ Logic related to selecting torrent upload applicable for soulseek search,
 based on contents, media format, user preferences, and whatnot.
 """
 
+import logging
 from typing import Any, Iterable
 
-import qbittorrentapi
-
 import src.gazelle_api as gazelle_api
-import src.shard as shard
+import src.soul_shard as soul_shard
+from src.app import LIB_LOGGER_NAME
 from src.file_catalog import FileCatalog
 from src.model import Album, Filelist, SearchResult, TorrentDetails
 from src.search import normalize_query
 from src.soul_config import CatalogConfig, Config
-from src.utils import *
+from src.utils import flatten, prompt_yes_no
 
-logger = app.get_logger()
+logger = logging.getLogger(LIB_LOGGER_NAME)
 
 
 class GazelleCatalog(FileCatalog):
@@ -48,6 +48,17 @@ class GazelleCatalog(FileCatalog):
 
         return filelists
 
+    def fill_meta(self, result: Filelist) -> Filelist:
+        details: TorrentDetails = result.meta["details"]
+        full_details = self.tracker.get_torrent_details(details.torrent.id)
+
+        assert full_details.torrent.info_hash
+
+        new_result = result.model_copy()
+        new_result.meta["details"] = full_details
+
+        return new_result
+
     def format_meta_link(self, filelist: Filelist) -> str:
         return self.tracker.format_torrent_link(filelist.meta["details"].torrent.id)
 
@@ -58,50 +69,12 @@ class GazelleCatalog(FileCatalog):
             "id": filelist.meta["details"].torrent.id,
         }
 
-    def make_catalog_download_id(self, filelist: Filelist) -> shard.CatalogDownloadId:
-        return shard.CatalogDownloadId(
+    def make_catalog_download_id(self, filelist: Filelist) -> soul_shard.CatalogDownloadId:
+        return soul_shard.CatalogDownloadId(
             catalog_id=self.catalog.id,
             download_id=filelist.meta["details"].torrent.id,
             type=self.catalog.type,
         )
-
-    def already_exists(self, filelist: Filelist) -> bool:
-        if not self.config.check_infohash:
-            return False
-
-        qbit_config = self.config.torrent_clients[0]
-        qbit_client = qbittorrentapi.Client(
-            host=qbit_config.host,
-            port=qbit_config.port,
-            username=qbit_config.username,
-            password=qbit_config.password,
-        )
-
-        torrent = filelist.meta["details"].torrent
-        if torrent.info_hash is None:
-            # Avoid modifying the arguments passed (mostly for my sanity)
-            t_candidate = self.tracker.get_torrent_details(torrent.id)
-            torrent = t_candidate.torrent
-            assert torrent.info_hash is not None
-
-        qbit_torrents = qbit_client.torrents_info()
-        suspiciously_similar_torrent = next(
-            (
-                info
-                for info in qbit_torrents
-                if info["hash"] == torrent.info_hash or info["name"] == filelist.folder_name
-            ),
-            None,
-        )
-        if suspiciously_similar_torrent is not None:
-            logger.debug(
-                "Similar torrent already exists: hash %s, folder '%s'",
-                suspiciously_similar_torrent["hash"],
-                suspiciously_similar_torrent["name"],
-            )
-            return True
-
-        return False
 
 
 def search_tracker_candidates(
@@ -114,17 +87,17 @@ def search_tracker_candidates(
     logger.info("Searching tracker for %s - %s", album.artist, album.name)
 
     # Get group details for given search result group id
-    get_group_torrents = lambda result: tracker.get_group_details(result.group_id)
+    def get_group_torrents(result):
+        return tracker.get_group_details(result.group_id)
 
     # Check torrent search result, using 'mandatory' attributes (the ones that
     # are returned from every endpoint returning torrent information)
-    precheck_torrent_result = (
-        lambda details: (not media_format or details.torrent.format == media_format)
-        and (not media_encoding or details.torrent.encoding == media_encoding)
-        and (config.allow_trumpable or (not details.torrent.trumpable))
-    )
-
-    ## Pipeline start here
+    def precheck_torrent_result(details: TorrentDetails):
+        return (
+            (not media_format or details.torrent.format == media_format)
+            and (not media_encoding or details.torrent.encoding == media_encoding)
+            and (config.allow_trumpable or (not details.torrent.trumpable))
+        )
 
     search_results = tracker.search_album_group(album, media_format=media_format)
 

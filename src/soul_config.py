@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 from os import path
@@ -10,7 +11,7 @@ from yaml.parser import ParserError
 
 import src.app as app
 
-logger = app.get_logger()
+logger = logging.getLogger(app.LIB_LOGGER_NAME)
 
 
 class CatalogConfig(BaseModel):
@@ -59,13 +60,19 @@ class Config(BaseModel):
     # Catalog configuration
     catalogs: List[CatalogConfig] = Field(..., min_length=1, max_length=1)
 
+    confident: bool = True
+    timid: bool = False
+    unattended: bool = True
+
     # Optional configuration with defaults
     max_cache_age_minutes: int = Field(default=4320, ge=0)
     allow_trumpable: bool = False
-    timid: bool = False
-    check_infohash: bool = True
+    check_infohash: bool = False
     search_folder_names: bool = False
     cache_expire_after: int = Field(default=7 * 24 * 60 * 60, ge=0)  # 7 days in seconds
+
+    skip_incomplete_downloads: bool = True
+    verify_before_import: bool = False
 
 
 def make_config(args=None) -> dict:

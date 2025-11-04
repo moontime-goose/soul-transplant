@@ -19,6 +19,7 @@ dependencies = [
     "rich>=14.2.0",
     "slskd-api>=0.1.5",
     "torf>=4.3.0",
+    "tqdm>=4.67.1",
     "ty>=0.0.1a23",
     "types-pyyaml>=6.0.12.20250915",
     "xdg-base-dirs>=6.0.2",
@@ -34,3 +35,6 @@ line-length = 100
 [tool.isort]
 line_length = 100
 split_on_trailing_comma = true
+
+[tool.ruff]
+line-length = 100

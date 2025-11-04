@@ -5,9 +5,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import logging
 
-from src.logger import get_logger, setup_logger
+from src.logger import setup_logger
 
 
 def pytest_configure():
-    setup_logger("test")
-    get_logger().setLevel(logging.DEBUG)
+    lib_logger = setup_logger()
+    lib_logger.setLevel(logging.DEBUG)

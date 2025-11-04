@@ -4,13 +4,14 @@ import time
 from functools import wraps
 
 from ratelimit import RateLimitException
+from rich.progress import track
 from rich.prompt import Confirm
 from xdg_base_dirs import xdg_cache_home, xdg_config_home
 
-import src.app as app
+from src.app import LIB_LOGGER_NAME
 from src.soul_config import Config
 
-logger = app.get_logger()
+logger = logging.getLogger(LIB_LOGGER_NAME)
 
 
 def flatten(xss):
@@ -26,7 +27,7 @@ def prompt_yes_no(
     """
 
     prompt_base = prompt.rstrip().rstrip("?")
-    if force_user or config.timid:
+    if not config.unattended and force_user or config.timid:
         return Confirm.ask(f">>> {prompt_base}?", default=default, show_default=True)
     else:
         if log_auto:
@@ -81,3 +82,14 @@ class SleepAndRetryDecorator(object):
 
 
 sleep_and_retry = SleepAndRetryDecorator
+
+
+def to_percentage(x: float) -> int:
+    return int(round(x * 100))
+
+
+def maybe_progress_bar(iterable, config: Config, **kwargs):
+    if config.unattended:
+        return track(iterable, **kwargs)
+    else:
+        return iterable

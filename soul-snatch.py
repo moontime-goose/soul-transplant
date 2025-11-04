@@ -1,45 +1,41 @@
-import logging
-from collections import defaultdict
-
-from src.logger import get_handler, setup_logger
-
-setup_logger("soul-snatch")
-
 import argparse
+import itertools
 import json
+import logging
 import os
 import signal
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import partial
 from os import path
-from typing import Iterable, Optional
+from typing import Iterable
 
-import click
 import requests
-import requests_cache
 import yaml
 from rich import print
-from yaml.parser import ParserError
 
 import src.app as app
 import src.gazelle_api as gazelle_api
-import src.shard as shard
+import src.logger as soul_logger
 import src.soul_config as soul_config
+import src.soul_shard as soul_shard
 import src.suppliers.soulseek as soulseek
 from src.catalogs.gazelle_catalog import GazelleCatalog
-from src.file_catalog import FileCatalog
+from src.file_catalog import FileCatalog, get_catalog_results
 from src.file_match import (
     FilelistMatch,
     attempt_filelist_match,
     prompt_match_confirmation,
 )
 from src.file_supplier import FileSupplier
+from src.logger import get_handler
 from src.model import Album, Filelist
-from src.search import make_search_strings, normalize_query
+from src.search import make_search_strings
 from src.soul_config import CatalogConfig, Config
-from src.utils import *
+from src.utils import maybe_progress_bar, prompt_yes_no
 
-logger = app.get_logger()
+logger = logging.getLogger("soul-snatch")
 
 
 def signal_handler(sig, frame):
@@ -157,36 +153,31 @@ def main():
 
     parser = make_parser()
     args = parser.parse_args()
-    logger.setLevel(args.loglevel.upper())
+
     try:
         config = merge_config_arguments(soul_config.make_config(args), args)
     except FileNotFoundError:
         print("Config file not found, exit")
         sys.exit(1)
 
+    logger.setLevel(args.loglevel.upper())
+    logger.addHandler(get_handler(args.log_dev))
+
+    lib_logger = soul_logger.setup_logger(args.log_dev)
+    lib_logger.setLevel(args.loglevel.upper())
+
     if args.log_dev:
-        logger.addHandler(get_handler(log_dev=True))
         logging.getLogger("urllib3").setLevel(args.log_dev.upper())
         logging.getLogger("urllib3").addHandler(get_handler(log_dev=True))
+
         logging.getLogger("requests").setLevel(args.log_dev.upper())
         logging.getLogger("requests").addHandler(get_handler(log_dev=True))
+
         logging.getLogger("requests_cache").setLevel(args.log_dev.upper())
         logging.getLogger("requests_cache").addHandler(get_handler(log_dev=True))
-    else:
-        logger.addHandler(get_handler(log_dev=False))
 
     if len(config.catalogs) > 1:
         logger.warning("Multiple catalogs are not yet supported, using the first one")
-
-    # Cache get requests from catalog(s)
-    urls_expire_after = {
-        f"{config.catalogs[0]}/ajax.php*": args.cache_expire_after,
-        "*": requests_cache.DO_NOT_CACHE,
-    }
-
-    requests_cache.install_cache(
-        backend="sqlite", urls_expire_after=urls_expire_after, serializer="json"
-    )
 
     tracker_catalog = make_catalog(config, config.catalogs[0])
     slskd_supplier = soulseek.SlskdApi(config)
@@ -211,65 +202,62 @@ def process_album_search(
     # Visual separation before starting new album search
     print("\n")
     if not prompt_yes_no(
-        config, f"Search for album: {album}?", default=True, log_auto=None, force_user=True
+        config,
+        f"Search for album: {album}?",
+        default=True,
+        log_auto=None,
+        force_user=not config.confident,
     ):
         return
 
     print(f"{album}: start search")
 
-    catalog_results = catalog.search(album)
+    logger.info("%s: search catalog", album)
+    catalog_results = get_catalog_results(config, album, catalog)
 
-    if prompt_yes_no(
-        config, f"{album}: edit {len(catalog_results)} results?", default=False, force_user=True
-    ):
-        catalog_results = select_results(config, catalog, catalog_results)
-
-    # Pre-check whether target directory already exists. This might change after
-    # some downloads are approved.
-    # t_candidates = list(reject_directory_conflicts(t_candidates, config.staging_folder))
-
-    if not catalog_results:
-        logger.info("%s: no tracker matches found", album)
+    peeked = next(catalog_results, None)
+    if not peeked:
+        logger.info("%s: no applicable catalog matches found", album)
         return
+
+    logger.info("%s: have at least one catalog result, search supplier", album)
+    catalog_results = itertools.chain([peeked], catalog_results)
+
+    thread_pool = ThreadPoolExecutor(max_workers=8)
+
+    search_strings = make_search_strings(album)
 
     # Cast a wide net. Generic queries will work of less popular stuff, where
     # number of files in responses comes under souiseek server limit (which
-    # comes at around 100-200 users and 2000-5000 files found).
-
-    logger.info("%s: search soulseek for %d candidates", album, len(catalog_results))
-
-    results = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        results = list(
-            executor.map(lambda s: supplier.perform_search(s), make_search_strings(album))
-        )
-
-        results = [(catalog_card, result) for catalog_card in catalog_results for result in results]
+    # comes at under 300 users and 2000-5000 files found, as configured currently).
+    supplier_results = [
+        thread_pool.submit(lambda s=s: supplier.perform_search(s)) for s in search_strings
+    ]
+    catalog_results = list(catalog_results)
 
     # If this occurs, then more specific queries might help. I haven't found any
     # documentation on soulseek query syntax (if any), so try searching for
     # folder names instead.
     is_response_limit_reached = False
 
-    done_list = []
-    retry_list = []
-    for catalog_card, (state, filelists) in results:
-        if state == FileSupplier.SearchStatus.LIMIT_REACHED:
-            is_response_limit_reached = True
+    done_list: list[Filelist] = []
+    for supplier_result_fut in maybe_progress_bar(
+        as_completed(supplier_results),
+        config,
+        description="General search",
+        total=len(supplier_results),
+    ):
+        (state, filelists) = supplier_result_fut.result()
+        for catalog_card in catalog_results:
+            if state == FileSupplier.SearchStatus.LIMIT_REACHED:
+                is_response_limit_reached = True
+            if any(done.folder_name == catalog_card.folder_name for done in done_list):
+                logger.info("%s: target folder already exists, skip", catalog_card.folder_name)
 
-        if target_folder_exists(config.staging_folder, catalog_card):
-            logger.debug("Target folder '%s' already exists, skip", catalog_card.folder_name)
-            continue
+            is_enqueued = process_search(config, album, catalog, supplier, catalog_card, filelists)
 
-        username = process_search(config, album, catalog, supplier, catalog_card, filelists)
-
-        if username is not None:
-            logger.info(
-                "[black on blue]%s[/], thanks! %s found", username, catalog_card.folder_name
-            )
-            done_list.append(catalog_card)
-        else:
-            retry_list.append(catalog_card)
+            if is_enqueued:
+                done_list.append(catalog_card)
 
     # Maybe, try search for folder names specifically. This is no silver bullet,
     # soulseek has been adding extra stuff even if query uses quotes to try
@@ -277,19 +265,16 @@ def process_album_search(
     # north of 20 different folder names to look up. Searches below will be
     # rate-limited often
 
-    if not should_search_by_folder_names(config, is_response_limit_reached, album, len(retry_list)):
+    if not should_search_by_folder_names(
+        config, is_response_limit_reached, album, len(catalog_results) - len(done_list)
+    ):
         logger.info("Matched %d torrent to soulseek", len(done_list))
         # Done with this album
         return
 
     # More specific searched. No ideas other than folder names at the moment
 
-    retry_list = [
-        catalog_card
-        for catalog_card in retry_list
-        if not target_folder_exists(config.staging_folder, catalog_card)
-    ]
-
+    retry_list = [card for card in catalog_results if card not in done_list]
     folder_map: defaultdict[str, list[Filelist]] = defaultdict(list)
 
     for catalog_card in retry_list:
@@ -297,27 +282,27 @@ def process_album_search(
 
     logger.info("Matched %d torrents, try %d folder name searches", len(done_list), len(folder_map))
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        results = executor.map(
-            lambda item: (
-                item[1],
-                supplier.perform_search(normalize_query(item[0])),
-            ),
-            folder_map.items(),
-        )
+    def search_task(supplier, folder, card):
+        return (card, supplier.perform_search(folder))
+
+    folder_results = [
+        thread_pool.submit(partial(search_task, supplier, folder, card))
+        for (folder, cards) in folder_map.items()
+        for card in cards
+    ]
 
     # Handle completion and results for folder searches
-    for catalog_cards, (_, filelists) in results:
-        for catalog_card in catalog_cards:
-            username = process_search(config, album, catalog, supplier, catalog_card, filelists)
-            if username is not None:
-                logger.info(
-                    "[black on blue]%s[/], thanks! %s found", username, catalog_card.folder_name
-                )
-                done_list.append(catalog_card)
-                break
+    for fut in maybe_progress_bar(
+        as_completed(folder_results), config, description="Folder search", total=len(folder_results)
+    ):
+        catalog_card, (_, filelists) = fut.result()
+        is_enqueued = process_search(config, album, catalog, supplier, catalog_card, filelists)
+        if is_enqueued:
+            done_list.append(catalog_card)
+            break
 
     logger.info("Matched %d total torrents to soulseek", len(done_list))
+    thread_pool.shutdown()
 
 
 def process_search(
@@ -327,13 +312,11 @@ def process_search(
     supplier: FileSupplier,
     reference_list: Filelist,
     filelists: list[Filelist],
-) -> Optional[str]:
+) -> bool:
     """
     Decide whether files from given responses can be used, and enqueue a (1)
     download if there are matching files.
     """
-
-    download_username = None
 
     for filelist in filelists:
         folder_match = attempt_filelist_match(
@@ -342,52 +325,29 @@ def process_search(
         if folder_match is None:
             continue
 
-        link = catalog.format_meta_link(reference_list)
+        if not supplier.is_downloadable(folder_match):
+            continue
+
         logger.info(
-            "[on green]MATCH[/]: %s from [black on blue]%s[/]", link, filelist.meta["username"]
+            "MATCH: catalog  - %s",
+            catalog.format_meta_link(folder_match.reference_list),
         )
 
-        # Doing infohash check is somewhat dumb: application could look up infohash on
-        # tracker ahead of time (<1 second) and avoid soulseek search (>5
-        # seconds). For the time being I picked extra work for soulseek. Also,
-        # it might work out for the better, because soulseek might return a few
-        # more responses with differently phrased and more specific queries.
-        #
-        # It this goes far enough to port to asyncio or an alternative,
-        # infohashes can be easily checked while soulseek searches are being
-        # executed
+        logger.info(
+            "MATCH: supplier - %s",
+            supplier.format_list_oneline(folder_match.download_list),
+        )
 
-        download_dir = path.join(config.staging_folder, folder_match.suggested_folder)
-        if os.path.exists(download_dir):
-            logger.info(
-                "[on green]MATCH[/]: '%s' skip: target folder already exists",
-                folder_match.suggested_folder,
-            )
-            continue
-
-        download_dir = path.join(config.staging_folder, folder_match.reference_list.folder_name)
-        if os.path.exists(download_dir):
-            logger.info(
-                "[on green]MATCH[/]: '%s' skip: reference folder already exists",
-                folder_match.suggested_folder,
-            )
-            continue
-
-        if catalog.already_exists(folder_match.reference_list):
-            logger.warning(
-                "[on green]MATCH[/]: '%s' skip: torrent already in qbit", reference_list.folder_name
-            )
-            break
-
+        # Download might enqueue-able at this point, confirm with user
         if not prompt_match_confirmation(
             config,
             folder_match,
-            f"[on green]MATCH[/]: '{folder_match.suggested_folder}': from user [black on blue]{filelist.meta['username']}[/]. Accept?",
+            f"[on green]MATCH[/]: {supplier.format_list_oneline(folder_match.download_list)}. Accept?",
         ):
             continue
 
         try:
-            shard_path = drop_shard(config, catalog, folder_match)
+            drop_shard(config, catalog, folder_match)
         except FileExistsError:
             logger.info(
                 "[on green]MATCH[/]: '%s' skip: target directory %s already exists",
@@ -399,7 +359,14 @@ def process_search(
             status, _ = supplier.enqueue_download(folder_match.download_list)
             if status == FileSupplier.DownloadStatus.SCHEDULED:
                 download_username = filelist.meta["username"]
-                break
+
+                logger.info(
+                    "[black on blue]%s[/], thanks! %s found",
+                    download_username,
+                    filelist.folder_name,
+                )
+
+                return True
         except requests.HTTPError as e:
             # This is not necessarily an error, large amount of files enqueued
             # from the same user might result in slskd instance, or remote
@@ -413,11 +380,11 @@ def process_search(
             ):
                 break
 
-    return download_username
+    return False
 
 
 def target_folder_exists(base_dir: str, filelist: Filelist) -> bool:
-    return os.path.exists(os.path.join(base_dir, filelist.folder_name))
+    return path.exists(path.join(base_dir, filelist.folder_name))
 
 
 def reject_directory_conflicts(
@@ -455,21 +422,22 @@ def drop_shard(config: Config, catalog: FileCatalog, download_match: FilelistMat
 
     os.mkdir(download_dir)
 
-    shard_path = os.path.join(download_dir, app.SHARD_FILE_BASENAME)
+    shard_path = path.join(download_dir, app.SHARD_FILE_BASENAME)
     with open(shard_path, mode="w") as shard_file:
         files = [
-            shard.FileDownload(
+            soul_shard.FileDownload(
                 download_name=path.basename(file_match.suggested.name),
                 reference_name=file_match.reference.name,
                 reference_size=file_match.reference.size,
             )
             for file_match in download_match.files
+            if file_match.suggested is not None
         ]
         catalog_id = catalog.make_catalog_download_id(download_match.reference_list)
-        reference_folder = os.path.join(
+        reference_folder = path.join(
             config.staging_folder, download_match.reference_list.folder_name
         )
-        new_shard = shard.Shard(
+        new_shard = soul_shard.Shard(
             catalog_ids=[catalog_id], files=files, reference_folder=reference_folder
         )
 
@@ -489,32 +457,8 @@ def parse_albumlist(filename):
 
     """
 
-    l = json.load(open(filename))
-    return [Album.model_validate(a) for a in l]
-
-
-def select_results(config: Config, catalog, catalog_results: list[Filelist]) -> list[Filelist]:
-    try:
-        logger.debug("Editing list of %d candidates", len(catalog_results))
-        lines = "\n".join(
-            f"{i:4}\t{catalog.format_meta_link(fl):80} {fl.folder_name}"
-            for i, fl in enumerate(catalog_results)
-        )
-        edited_list = click.edit(lines)
-        if edited_list is not None:
-            lines = edited_list.split("\n")
-            indices = [int(s.strip().split("\t")[0].strip()) for s in lines if s]
-            edited_results = [r for i, r in enumerate(catalog_results) if i in indices]
-            logger.debug("Edited to %d candidates", len(catalog_results))
-
-            return edited_results
-        else:
-            return catalog_results
-    except ParserError as e:
-        logger.error("Error parsing edited catalog results: %s", e)
-        logger.error("Continue with original results")
-
-        return catalog_results
+    j_list = json.load(open(filename))
+    return [Album.model_validate(a) for a in j_list]
 
 
 def should_search_by_folder_names(
@@ -531,7 +475,7 @@ def should_search_by_folder_names(
 
 def make_catalog(config: Config, catalog: CatalogConfig) -> FileCatalog:
     if catalog.type == "Gazelle":
-        tracker = gazelle_api.Tracker(catalog.url.encoded_string(), catalog.api_key)
+        tracker = gazelle_api.Tracker(config, catalog.url.encoded_string(), catalog.api_key)
         return GazelleCatalog(config, catalog, tracker)
     else:
         raise NotImplementedError

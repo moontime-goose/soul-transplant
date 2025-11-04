@@ -2,8 +2,7 @@ import abc
 from enum import Enum
 from typing import Any
 
-from src.file_match import Filelist
-from src.model import Filelist
+from src.file_match import Filelist, FilelistMatch
 
 
 class FileSupplier(abc.ABC):
@@ -38,4 +37,12 @@ class FileSupplier(abc.ABC):
         itself may actually be completed in here, if it's fast enough, but
         that's optional
         """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def is_downloadable(self, folder_match: FilelistMatch) -> bool:
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def format_list_oneline(self, filelist: Filelist) -> str:
         raise NotImplementedError()

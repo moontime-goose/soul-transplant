@@ -1,13 +1,13 @@
 import glob
 import json
+import logging
 
 import pytest
 
 from src.file_match import attempt_filelist_match, format_match
-from src.logger import get_logger
 from src.model import Album, Filelist
 
-logger = get_logger()
+logger = logging.getLogger("soul-test")
 
 
 class TestFilelistMatch:

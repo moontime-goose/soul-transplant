@@ -1,18 +1,11 @@
-#!/usr/bin/env python3
 import argparse
 import os
 import sys
 
 import qbittorrentapi
 import slskd_api
-import yaml
 from rich import print
 from rich.pretty import pprint
-from rich.syntax import Syntax
-
-from src.logger import setup_logger
-
-setup_logger("validate-config")
 
 from src.soul_config import Config, find_config, read_config
 
