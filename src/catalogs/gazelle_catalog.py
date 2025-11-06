@@ -57,8 +57,6 @@ class GazelleCatalog(FileCatalog):
         details: TorrentDetails = result.meta["details"]
         full_details = self.tracker.get_torrent_details(details.torrent.id)
 
-        assert full_details.torrent.info_hash
-
         new_result = result.model_copy()
         new_result.meta["details"] = full_details
 
