@@ -65,14 +65,14 @@ def make_parser():
     parser.add_argument(
         "--skip-incomplete",
         action="store_true",
-        dest="skip_incomplete",
+        dest="skip_incomplete_downloads",
         help="Automatically skip incomplete downloads (at least one file missing)",
     )
 
     parser.add_argument(
         "--no-skip-incomplete",
         action="store_false",
-        dest="skip_incomplete",
+        dest="skip_incomplete_downloads",
         help="Prompt user on incomplete downloads",
     )
     return parser
@@ -83,7 +83,7 @@ def merge_config_arguments(config_data, args):
     Resolve configuration overrides and finalize the config for this run
     """
     arg_values = vars(args)
-    for parameter in ["skip_incomplete"]:
+    for parameter in ["skip_incomplete_downloads"]:
         if parameter in arg_values:
             config_data[parameter] = arg_values[parameter]
 
@@ -255,9 +255,9 @@ def ensure_download_complete(config: Config, download_folder: str, shard: Shard)
             )
             return False
 
-    if prompt_to_confirm and (
-        config.skip_incomplete_downloads or not prompt.Confirm.ask("Match this folder?")
-    ):
+    if not prompt_to_confirm:
+        return
+    if config.skip_incomplete_downloads or (not prompt.Confirm.ask("Match this folder?")):
         raise FileNotFoundError(f"Missing files in {download_folder}")
 
 
