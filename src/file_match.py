@@ -57,8 +57,7 @@ class FilelistMatch:
     def overall_similarity(self) -> int:
         return int(
             round(self.folder_name_similarity() + sum(f.similarity for f in self.files))
-            / len(self.files)
-            + 1
+            / (len(self.files) + 1)
         )
 
 
@@ -391,11 +390,9 @@ def format_match(list_match) -> str:
     if not files_match:
         match_message.append("[red]File name(s) mismatch[/]")
 
-    avg_similarity = (
-        list_match.folder_name_similarity() + sum(f.similarity for f in list_match.files)
-    ) / (1 + len(list_match.files))
+    avg_similarity = list_match.overall_similarity()
 
-    match_message.append(color_line(f"Similarity: {avg_similarity:.2f}%", avg_similarity == 100))
+    match_message.append(color_line(f"Similarity: {avg_similarity}%", avg_similarity == 100))
 
     return "\n".join(match_message)
 
