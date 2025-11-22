@@ -78,7 +78,7 @@ class SlskdApi(FileSupplier):
 
         ret_state = (
             FileSupplier.SearchStatus.LIMIT_REACHED
-            if "ResponseLimitReached" in states
+            if (("ResponseLimitReached" in states) or ("FileLimitReached" in states))
             else FileSupplier.SearchStatus.COMPLETE
         )
 
@@ -185,7 +185,7 @@ class SlskdApi(FileSupplier):
             with self.lock:
                 state = self.slskd.searches.state(search_id)
             # TODO: state string is ", ".join()'ed list of states. Notable ones are
-            # "Completed", "InProgress", "ResponseLimitReached". Latter one could be
+            # "Completed", "InProgress", "ResponseLimitReached", "FileLimitReached". Latter one could be
             # considered to decide on whether searches should be
             # repeated/rephrased/etc
             if "Complete" in state["state"]:

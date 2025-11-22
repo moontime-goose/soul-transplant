@@ -1,3 +1,4 @@
+from datetime import timedelta
 import logging
 import sqlite3
 from typing import Iterable, Optional
@@ -40,7 +41,7 @@ class Tracker:
     def __init__(self, config: Config, tracker_url: str, tracker_api_key: str):
         self.tracker_url = tracker_url.rstrip("/")
         self.tracker_api_key = tracker_api_key
-        self.session = requests_cache.CachedSession(expire_after=-1)
+        self.session = requests_cache.CachedSession(expire_after=timedelta(days=30))
 
     def search_album_group(
         self, album: Album, max_pages=3, media_format=None, media_encoding=None
@@ -179,7 +180,7 @@ class Tracker:
                 return body
         except reqs.exceptions.HTTPError as e:
             if not (e.response.status_code == 504):
-                raise e
+                raise
 
         request = reqs.Request(
             "GET",
@@ -208,8 +209,7 @@ class Tracker:
     @sleep_and_retry("tracker", log_level=logging.INFO)
     @limits(calls=1, period=1)
     def send_ratelimited_request(self, request: reqs.PreparedRequest):
-        with self.session.cache_disabled():
-            return self.session.send(request)
+        return self.session.send(request)
 
     def format_group_link(self, group_id) -> str:
         return f"{self.tracker_url}/torrents.php?id={group_id}"
