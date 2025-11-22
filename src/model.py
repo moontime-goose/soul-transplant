@@ -58,6 +58,8 @@ class Torrent(BaseModel):
     snatched: int
     size: int
     file_count: int
+    remaster_record_label: str
+    remaster_catalogue_number: str
 
 
 class TorrentResult(BaseModel):

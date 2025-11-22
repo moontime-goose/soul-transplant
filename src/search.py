@@ -14,8 +14,7 @@ def make_search_strings(album: Album) -> list[str]:
     return [
         normalize_query(s)
         for s in [
-            rf""""{album.artist}" "{album.name}" {album.year or ""}""",
-            rf"""{album.artist} {album.name}""",
-            rf""""{album.name}" {album.year or ""}""",
+            rf""""{album.artist}" "{album.name}" FLAC""",
+            rf""""{album.name}" {album.year or ""} FLAC""",
         ]
     ]

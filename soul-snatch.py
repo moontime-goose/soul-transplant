@@ -5,6 +5,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
@@ -14,6 +15,7 @@ from typing import Iterable
 import requests
 import yaml
 from rich import print
+from rich.progress import track
 
 import src.app as app
 import src.gazelle_api as gazelle_api
@@ -28,7 +30,7 @@ from src.file_match import (
     attempt_filelist_match,
     prompt_match_confirmation,
 )
-from src.file_supplier import FileSupplier
+from src.file_supplier import FileSupplier, SearchFailedException
 from src.logger import get_handler
 from src.model import Album, Filelist
 from src.soul_config import CatalogConfig, Config
@@ -198,15 +200,21 @@ def main():
         logging.getLogger("requests_cache").setLevel(args.log_dev.upper())
         logging.getLogger("requests_cache").addHandler(get_handler(log_dev=True))
 
-    if len(config.catalogs) > 1:
-        logger.warning("Multiple catalogs are not yet supported, using the first one")
+    tracker_catalogs = [make_catalog(config, catalog) for catalog in config.catalogs]
 
-    tracker_catalog = make_catalog(config, config.catalogs[0])
     slskd_supplier = slskd.SlskdApi(config)
 
     albums = parse_albumlist(args.input_file)
     for album in albums:
-        process_album_search(config, tracker_catalog, slskd_supplier, album)
+        logger.info("%s: start search", album)
+        for catalog in tracker_catalogs:
+            try:
+                process_album_search(config, catalog, slskd_supplier, album)
+            except SearchFailedException:
+                logger.warning("%s: search failed, skip", album)
+                time.sleep(5)
+
+        print("\n")
 
 
 def process_album_search(
@@ -222,7 +230,6 @@ def process_album_search(
     # nice readable linear log
 
     # Visual separation before starting new album search
-    print("\n")
     if not prompt_yes_no(
         config,
         f"Search for album: {album}?",
@@ -232,9 +239,6 @@ def process_album_search(
     ):
         return
 
-    print(f"{album}: start search")
-
-    logger.info("%s: search catalog", album)
     catalog_results = get_catalog_results(config, album, catalog)
 
     peeked = next(catalog_results, None)
@@ -249,7 +253,8 @@ def process_album_search(
     catalog_results = list(catalog_results)
 
     done_list: list[Filelist] = []
-    for filelist in supplier_results:
+    i = 0
+    for i, filelist in enumerate(supplier_results):
         for catalog_card in catalog_results:
             if any(done.folder_name == catalog_card.folder_name for done in done_list):
                 logger.debug("%s: target folder already exists, skip", catalog_card.folder_name)
@@ -285,7 +290,7 @@ def process_album_search(
         folder_map[catalog_card.folder_name].append(catalog_card)
 
     def search_task(supplier, folder, card):
-        return (card, supplier.perform_search(folder))
+        return (card, supplier.search_text(folder))
 
     thread_pool = ThreadPoolExecutor(max_workers=8)
 
@@ -297,9 +302,9 @@ def process_album_search(
 
     # Handle completion and results for folder searches
     for fut in as_completed(folder_results):
-        catalog_card, (_, filelists) = fut.result()
+        catalog_card, filelists = fut.result()
         for filelist in filelists:
-            is_enqueued = process_search(config, album, catalog, supplier, catalog_card, filelists)
+            is_enqueued = process_search(config, album, catalog, supplier, catalog_card, filelist)
             if is_enqueued:
                 done_list.append(catalog_card)
                 if not prompt_yes_no(

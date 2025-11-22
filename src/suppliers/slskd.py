@@ -14,7 +14,7 @@ from src.file_supplier import FileSupplier, SearchFailedException
 from src.model import Album, Filelist, FilelistEntry
 from src.search import make_search_strings
 from src.soul_config import Config
-from src.utils import sleep_and_retry
+from src.utils import flatten, sleep_and_retry
 
 logger = logging.getLogger(LIB_LOGGER_NAME)
 
@@ -31,48 +31,44 @@ class SlskdApi(FileSupplier):
         self.lock = threading.Lock()
 
     def search_album(self, album: Album) -> Iterable[Filelist]:
-        thread_pool = ThreadPoolExecutor(max_workers=8)
-        search_strings = make_search_strings(album)
+        with ThreadPoolExecutor(max_workers=8) as thread_pool:
+            search_strings = make_search_strings(album)
 
-        # Cast a wide net. Generic queries will work of less popular stuff, where
-        # number of files in responses comes under souiseek server limit (which
-        # comes at under 300 users and 2000-5000 files found, as configured currently).
-        supplier_results = [
-            thread_pool.submit(lambda s=s: list(self.search_text(s))) for s in search_strings
-        ]
+            # Cast a wide net. Generic queries will work of less popular stuff, where
+            # number of files in responses comes under souiseek server limit (which
+            # comes at under 300 users and 2000-5000 files found, as configured currently).
+            supplier_results = [
+                thread_pool.submit(lambda s=s: list(self.search_text(s))) for s in search_strings
+            ]
 
-        # If this occurs, then more specific queries might help. I haven't found any
-        # documentation on soulseek query syntax (if any), so try searching for
-        # folder names instead.
+            # If this occurs, then more specific queries might help. I haven't found any
+            # documentation on soulseek query syntax (if any), so try searching for
+            # folder names instead.
 
-        for supplier_result_fut in as_completed(supplier_results):
-            filelists = supplier_result_fut.result()
-            for fl in filelists:
-                yield fl
+            return flatten(fut.result() for fut in as_completed(supplier_results))
 
     def search_text(self, search_str: str) -> Iterable[Filelist]:
-        MAX_SLEEP_MS = 15000
+        MAX_SLEEP_MS = 10000
         CHECK_INTERVAL_MS = 100
 
-        with self.lock:
-            search_info = self.search(search_str, timeout_ms=15000)
-
+        search_info = self.search(search_str, timeout_ms=10000)
         search_id = search_info["id"]
 
         state = {"state": "InProgress"}
         for _ in range(int(MAX_SLEEP_MS / CHECK_INTERVAL_MS)):
             with self.lock:
                 state = self.slskd.searches.state(search_id)
-                # TODO: state string is ", ".join()'ed list of states. Notable ones are
-                # "Completed", "InProgress", "ResponseLimitReached". Latter one could be
-                # considered to decide on whether searches should be
-                # repeated/rephrased/etc
-                if (
-                    "Complete" in state["state"]
-                    or "Fail" in state["state"]
-                    or "Error" in state["state"]
-                ):
-                    break
+            # TODO: state string is ", ".join()'ed list of states. Notable ones are
+            # "Completed", "InProgress", "ResponseLimitReached". Latter one could be
+            # considered to decide on whether searches should be
+            # repeated/rephrased/etc
+            if (
+                "Complete" in state["state"]
+                or "Fail" in state["state"]
+                or "Error" in state["state"]
+            ):
+                logger.debug("complete %s", state["state"])
+                break
             time.sleep(CHECK_INTERVAL_MS / 1000.0)
 
         states = state["state"].split(", ")
@@ -88,12 +84,13 @@ class SlskdApi(FileSupplier):
 
         with self.lock:
             responses = self.slskd.searches.search_responses(search_id)
-            if ret_state == FileSupplier.SearchStatus.LIMIT_REACHED and len(responses) == 0:
-                logger.debug(
-                    "Soulseek search '%s': limit reached, but 0 responses, wait and retry",
-                    state["searchText"],
-                )
-                time.sleep(2)
+        if ret_state == FileSupplier.SearchStatus.LIMIT_REACHED and len(responses) == 0:
+            logger.debug(
+                "Soulseek search '%s': limit reached, but 0 responses, wait and retry",
+                state["searchText"],
+            )
+            time.sleep(2)
+            with self.lock:
                 responses = self.slskd.searches.search_responses(search_id)
 
         logger.debug(
@@ -103,18 +100,22 @@ class SlskdApi(FileSupplier):
             states,
         )
 
-        # Randomize, but prefer uploads with at least 1Mb/s up speed
         responses.sort(
             key=lambda r: r["uploadSpeed"] * (5 if r["hasFreeUploadSlot"] else 1), reverse=True
         )
+        responses = [
+            r for r in responses if r["username"] not in ["Beardown27", "all_the_things111"]
+        ]
         responses = map(parse_slskd_response, responses)
 
-        for response in responses:
-            yield response
+        return iter(responses)
 
+    @sleep_and_retry("slskd", log_level=logging.INFO, min_logged_sleep_sec=2)
+    @limits(calls=1, period=5)
     def enqueue_download(self, filelist: Filelist) -> tuple[FileSupplier.DownloadStatus, Any]:
         slskd_filelist = [f.meta["file"] for f in filelist.files]
-        responses = [self.slskd.transfers.enqueue(filelist.meta["username"], slskd_filelist)]
+        with self.lock:
+            responses = [self.slskd.transfers.enqueue(filelist.meta["username"], slskd_filelist)]
         all_succeeded = all(responses)
         status = (
             FileSupplier.DownloadStatus.SCHEDULED
@@ -146,7 +147,11 @@ class SlskdApi(FileSupplier):
             )
             return False
 
-        has_nested_folders = any("/" in entry.name for entry in folder_match.reference_list.files)
+        has_nested_folders = any(
+            "/" in entry.name
+            for entry in folder_match.reference_list.files
+            if entry.name.endswith(".flac")
+        )
 
         if has_nested_folders:
             logger.info(
@@ -160,11 +165,12 @@ class SlskdApi(FileSupplier):
     def format_list_oneline(self, filelist: Filelist) -> str:
         return f"{filelist.folder_name} from user [black on blue]{filelist.meta['username']}[/]"
 
-    def search(self, query: str, timeout_ms=15000) -> dict:
+    def search(self, query: str, timeout_ms=10000) -> dict:
         return self.lookup_completed_search(query) or self.start_search(query, timeout_ms)
 
     def lookup_completed_search(self, query: str) -> Optional[dict]:
-        searches = self.slskd.searches.get_all()
+        with self.lock:
+            searches = self.slskd.searches.get_all()
         found = next((s for s in searches if s["searchText"] == query), None)
         if found:
             logger.debug("Reuse slskd search for : %s", query)
@@ -176,7 +182,8 @@ class SlskdApi(FileSupplier):
 
         state = {}
         for _ in range(int(MAX_SLEEP_MS / CHECK_INTERVAL_MS)):
-            state = self.slskd.searches.state(search_id)
+            with self.lock:
+                state = self.slskd.searches.state(search_id)
             # TODO: state string is ", ".join()'ed list of states. Notable ones are
             # "Completed", "InProgress", "ResponseLimitReached". Latter one could be
             # considered to decide on whether searches should be
@@ -188,7 +195,8 @@ class SlskdApi(FileSupplier):
         logger.debug("Soulseek search %s completed with status %s", search_id, state["state"])
 
         states = state["state"].split(", ")
-        responses = self.slskd.searches.search_responses(search_id)
+        with self.lock:
+            responses = self.slskd.searches.search_responses(search_id)
 
         return (states, responses)
 
@@ -200,11 +208,12 @@ class SlskdApi(FileSupplier):
         """
         Kick off a search with given text query
         """
-        logger.debug("Search slskd for       : %s", query)
+        logger.debug("Search slskd for: %s", query)
 
-        return self.slskd.searches.search_text(
-            query, filterResponses=True, searchTimeout=timeout_ms, responseLimit=300
-        )
+        with self.lock:
+            return self.slskd.searches.search_text(
+                query, filterResponses=True, searchTimeout=timeout_ms, responseLimit=500
+            )
 
 
 def parse_slskd_response(response: dict) -> Filelist:

@@ -134,9 +134,10 @@ def is_group_applicable(config: Config, result: SearchResult, album: Album) -> b
 
     # Very rough, could do some normalization like replacing apostrophes,
     # quotes, etc. with whitespace
-    return normalize_query(result.artist.lower()) == normalize_query(
-        album.artist.lower()
-    ) and normalize_query(result.group_name.lower()) == normalize_query(album.name.lower())
+    return (
+        normalize_query(album.artist) in normalize_query(result.artist)
+        or normalize_query(result.artist) in normalize_query(album.artist)
+    ) and normalize_query(result.group_name) == normalize_query(album.name)
 
 
 def user_confirm_group(config: Config, candidate: TorrentDetails, link=None):

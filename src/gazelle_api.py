@@ -40,7 +40,7 @@ class Tracker:
     def __init__(self, config: Config, tracker_url: str, tracker_api_key: str):
         self.tracker_url = tracker_url.rstrip("/")
         self.tracker_api_key = tracker_api_key
-        self.session = requests_cache.CachedSession(expire_after=config.cache_expire_after)
+        self.session = requests_cache.CachedSession(expire_after=-1)
 
     def search_album_group(
         self, album: Album, max_pages=3, media_format=None, media_encoding=None
@@ -170,14 +170,30 @@ class Tracker:
             params=params,
         ).prepare()
 
-        if not self.session.cache.contains(request=request):
-            resp = self.send_ratelimited_request(request)
-        else:
+        try:
             resp = self.session.send(request, only_if_cached=True)
+            resp.raise_for_status()
+            body = resp.json()
 
+            if body["status"] == "success":
+                return body
+        except reqs.exceptions.HTTPError as e:
+            if not (e.response.status_code == 504):
+                raise e
+
+        request = reqs.Request(
+            "GET",
+            f"{self.tracker_url}/ajax.php",
+            headers={"Authorization": self.tracker_api_key},
+            params=params,
+        ).prepare()
+
+        resp = self.send_ratelimited_request(request)
+        resp.raise_for_status()
         body = resp.json()
 
         if body["status"] != "success":
+            logger.warning("tracker error: %s", body)
             raise Tracker.StatusError(body)
 
         return body
@@ -186,11 +202,14 @@ class Tracker:
     # tracker RED says 10 requests per 10 seconds, but keep it lower for the time
     # being, to have more time to catch errors in program output
     @sleep_and_retry("tracker", log_level=logging.INFO)
+    @limits(calls=10, period=15)
+    @sleep_and_retry("tracker", log_level=logging.INFO)
+    @limits(calls=8, period=10)
+    @sleep_and_retry("tracker", log_level=logging.INFO)
     @limits(calls=1, period=1)
-    @limits(calls=3, period=4)
-    @limits(calls=7, period=14)
     def send_ratelimited_request(self, request: reqs.PreparedRequest):
-        return self.session.send(request)
+        with self.session.cache_disabled():
+            return self.session.send(request)
 
     def format_group_link(self, group_id) -> str:
         return f"{self.tracker_url}/torrents.php?id={group_id}"

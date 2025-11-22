@@ -8,6 +8,7 @@ import qbittorrentapi
 import src.soul_shard as soul_shard
 from src.app import LIB_LOGGER_NAME
 from src.model import Album, Filelist
+from src.qbit_cache import QbitCache
 from src.soul_config import Config
 from src.utils import prompt_yes_no
 
@@ -76,9 +77,10 @@ def get_catalog_results(config: Config, album: Album, catalog: FileCatalog) -> I
 
     catalog_results = maybe_prompt_select_results(config, album, catalog, catalog_results)
 
-    logger.info("%s: getting full catalog information for %d results", album, len(catalog_results))
-
     if config.check_infohash:
+        logger.info(
+            "%s: getting full catalog information for %d results", album, len(catalog_results)
+        )
         catalog_results = map(lambda result: catalog.fill_meta(result), catalog_results)
 
     catalog_results = reject_if_torrent_exists(config, catalog_results)
@@ -86,37 +88,16 @@ def get_catalog_results(config: Config, album: Album, catalog: FileCatalog) -> I
     if not catalog_results:
         return iter([])
 
-    return catalog_results
+    return iter(catalog_results)
+
+
+_qbit_cache = None
 
 
 def reject_if_torrent_exists(config: Config, filelists: Iterable[Filelist]) -> Iterator[Filelist]:
-    qbit_config = config.torrent_clients[0]
-    qbit_client = qbittorrentapi.Client(
-        host=qbit_config.host,
-        port=qbit_config.port,
-        username=qbit_config.username,
-        password=qbit_config.password,
-    )
+    global _qbit_cache
+    if not _qbit_cache:
+        _qbit_cache = QbitCache(config)
 
-    qbit_torrents = qbit_client.torrents_info()
-    infohash_map = {info["hash"]: info for info in qbit_torrents}
-    name_map = {info["name"]: info for info in qbit_torrents}
-
-    def torrent_exists(fl: Filelist):
-        infohash = None
-        if details := fl.meta.get("details", None):
-            infohash = details.torrent.info_hash
-
-        folder_name = fl.folder_name
-
-        suspiciously_similar_torrent = infohash_map.get(infohash, None) or name_map.get(
-            folder_name, None
-        )
-
-        if suspiciously_similar_torrent is not None:
-            logger.debug("%s - already exists in qbit, hash %s", folder_name, infohash)
-            return True
-
-        return False
-
-    return filter(lambda fl: not torrent_exists(fl), filelists)
+    assert _qbit_cache is not None
+    return filter(lambda fl: not _qbit_cache.torrent_exists(fl), filelists)

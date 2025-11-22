@@ -147,6 +147,7 @@ def main():
 
     existing_torrents = qbit_client.torrents_info()
     existing_hashes = {info["hash"]: info for info in existing_torrents}
+    existing_names = {str(info["name"]) for info in existing_torrents}
 
     new_torrents: dict[str, str] = dict()
 
@@ -154,6 +155,10 @@ def main():
         t = torf.Torrent.read(path)
         if t.infohash in existing_hashes:
             logger.info("'%s' already exists in qbit", existing_hashes[t.infohash]["name"])
+            continue
+
+        if t.name in existing_names:
+            logger.info("torrent with name '%s' already exists in qbit", t.name)
             continue
 
         if config.verify_before_import:
@@ -278,18 +283,17 @@ def ensure_torrent_content_structure(download_folder, shard: Shard):
 
         assert src != dst
 
-        # TODO Case-insensitive file systems will goof here and file will not be
-        # renamed. Find a way to check for this
+        # Check for case-insensitive file-systems
+        if os.path.exists(dst) and src.lower() == dst.lower():
+            rename_arguments.append((src, f"{src}.bkp"))
+            rename_arguments.append((f"{src}.bkp", dst))
+            continue
+
         if not os.path.exists(dst):
             if not os.path.exists(src):
                 raise FileNotFoundError(src)
 
-            if src != dst:
-                if src.lower() == dst.lower():
-                    rename_arguments.append((src, f"{src}.bkp"))
-                    rename_arguments.append((f"{src}.bkp", dst))
-                else:
-                    rename_arguments.append((src, dst))
+            rename_arguments.append((src, dst))
 
     if download_folder != shard.reference_folder:
         src = download_folder
@@ -340,7 +344,9 @@ def get_torrent_file_path(config: Config, shard: Shard) -> str:
             config, catalog_config.url.encoded_string(), catalog_config.api_key
         )
 
-        torrent_file_path = cache_path(f"{shard_catalog.download_id}.torrent")
+        torrent_file_path = cache_path(
+            f"{shard_catalog.catalog_id}-{shard_catalog.download_id}.torrent"
+        )
         if not os.path.exists(torrent_file_path):
             logger.info(
                 "Fetching torrent id=%s to %s",
