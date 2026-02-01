@@ -35,7 +35,7 @@ class QbitCache(metaclass=Singleton):
             port=qbit_config.port,
             username=qbit_config.username,
             password=qbit_config.password,
-            REQUESTS_ARGS={"timeout": (3.1, 30)},
+            REQUESTS_ARGS={"timeout": (3.1, 60)},
         )
         self.cache = None
         self.infohash_map = dict()
