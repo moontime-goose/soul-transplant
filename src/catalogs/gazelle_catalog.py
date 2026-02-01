@@ -6,6 +6,8 @@ based on contents, media format, user preferences, and whatnot.
 import logging
 from typing import Any, Iterable
 
+from requests import request
+
 import src.gazelle_api as gazelle_api
 import src.soul_shard as soul_shard
 from src.app import LIB_LOGGER_NAME

@@ -41,7 +41,9 @@ class Tracker:
     def __init__(self, config: Config, tracker_url: str, tracker_api_key: str):
         self.tracker_url = tracker_url.rstrip("/")
         self.tracker_api_key = tracker_api_key
-        self.session = requests_cache.CachedSession(expire_after=timedelta(days=30))
+        self.session = requests_cache.CachedSession(
+            expire_after=timedelta(days=config.cache_expire_after)
+        )
 
     def search_album_group(
         self, album: Album, max_pages=3, media_format=None, media_encoding=None
@@ -203,13 +205,13 @@ class Tracker:
     # tracker RED says 10 requests per 10 seconds, but keep it lower for the time
     # being, to have more time to catch errors in program output
     @sleep_and_retry("tracker", log_level=logging.INFO)
-    @limits(calls=10, period=15)
+    @limits(calls=10, period=60)
     @sleep_and_retry("tracker", log_level=logging.INFO)
-    @limits(calls=8, period=10)
+    @limits(calls=3, period=10)
     @sleep_and_retry("tracker", log_level=logging.INFO)
-    @limits(calls=1, period=1)
+    @limits(calls=1, period=2)
     def send_ratelimited_request(self, request: reqs.PreparedRequest):
-        return self.session.send(request)
+        return self.session.send(request, force_refresh=True, refresh=True, expire_after=0)
 
     def format_group_link(self, group_id) -> str:
         return f"{self.tracker_url}/torrents.php?id={group_id}"
