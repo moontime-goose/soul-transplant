@@ -103,9 +103,6 @@ class SlskdApi(FileSupplier):
         responses.sort(
             key=lambda r: r["uploadSpeed"] * (5 if r["hasFreeUploadSlot"] else 1), reverse=True
         )
-        responses = [
-            r for r in responses if r["username"] not in ["Beardown27", "all_the_things111"]
-        ]
         responses = map(parse_slskd_response, responses)
 
         return iter(responses)
