@@ -142,7 +142,7 @@ def main():
         password=qbit_config.password,
     )
 
-    existing_torrents = qbit_client.torrents_info(sort="added_on", reverse=False)
+    existing_torrents = qbit_client.torrents_info(sort="added_on", reverse=True)
     existing_torrent_map: dict[str, qbittorrentapi.TorrentDictionary] = {
         str(t["hash"]).upper(): t
         for t in track(existing_torrents, description="Getting torrent tracker list")
@@ -182,114 +182,112 @@ def main():
 
         return False
 
-    for tracker_url, torrents in sorted(torrents_by_tracker.items())[:1]:
-        logger.info("Try to cross-seed %d torrents from tracker %s", len(torrents), tracker_url)
+    torrents = [
+        (tracker_url, torrent)
+        for (tracker_url, torrents) in torrents_by_tracker.items()
+        for torrent in torrents
+    ]
+    torrents = sorted(torrents, key=lambda t: int(t[1]["added_on"]), reverse=True)
+
+    for tracker_url, torrent in track(torrents, description="Searching for cross-seeds"):
+        logger.info("%s: search for cross-seeds for: %s", tracker_url, torrent['name'])
         src_catalog = catalogs[tracker_url]
         dst_catalogs = [tracker for (url, tracker) in catalogs.items() if url != tracker_url]
 
-        torrents = torrents[:]
-        random.shuffle(torrents)
-        for i, torrent in enumerate(
-            track(
-                torrents,
-                description="Searching for cross-seeds",
-            )
-        ):
-            try:
-                print("\nindex: ", i)
-                if is_cross_seeded(torrent):
-                    logger.info("already cross-seeded, skip")
-                    time.sleep(1)
-                    continue
-                infohash = str(torrent["hash"])
-                content_path = str(torrent["content_path"])
-                if qbit_config.prefix_mapping:
-                    content_path = content_path.replace(
-                        qbit_config.prefix_mapping.remote, qbit_config.prefix_mapping.host
-                    )
-                logger.info("Torrent files at %s", content_path)
-                src_details = src_catalog.tracker.get_torrent_details(infohash=infohash)
-
-                album = Album(
-                    artist=src_details.group.music_info["artists"][0]["name"],
-                    name=src_details.group.name,
-                    year=src_details.group.year,
-                )
-                logger.info("Will search for the album: %s", album)
-                reference_list = Filelist(
-                    folder_name=src_details.torrent.file_path, files=src_details.torrent.file_list
-                )
-                for catalog in dst_catalogs:
-                    try:
-                        suggestions = catalog.search(album)
-                        for suggested_list in suggestions:
-                            dst_details: TorrentDetails = suggested_list.meta["details"]
-                            list_match = attempt_filelist_match(
-                                album,
-                                suggested_list,
-                                reference_list,
-                                suggested_folder=dst_details.torrent.file_path,
-                            )
-                            if list_match is None:
-                                continue
-                            if list_match.suggested_folder != list_match.reference_list.folder_name:
-                                logger.warning(
-                                    "Renamed folder: '%s' != '%s'",
-                                    list_match.suggested_folder,
-                                    list_match.reference_list.folder_name,
-                                )
-                                continue
-
-                            if list_match.overall_similarity() != 100:
-                                print(format_match(list_match))
-                                logger.warning("Something different, skip")
-                                continue
-
-                            logger.info("Found match for %s", album)
-
-                            suggested_list = catalog.fill_meta(suggested_list)
-                            dst_details: TorrentDetails = suggested_list.meta["details"]
-
-                            if (dst_details.torrent.info_hash is not None) and (
-                                dst_details.torrent.info_hash.upper() in existing_torrent_map.keys()
-                            ):
-                                logger.info("Already exists in client, continue")
-                                continue
-
-                            if is_torrent_file_already_downloaded(catalog, dst_details):
-                                logger.info("Torrent file already downloaded, skip")
-                                continue
-
-                            try:
-                                torrent_file_path = get_torrent_file_path(catalog, dst_details)
-                            except Exception:
-                                time.sleep(15)
-                                continue
-
-                            percentage_valid, size = verify_torrent(torrent_file_path, content_path)
-                            if percentage_valid < 100:
-                                logger.warning(
-                                    "Torrent content mismatch: %.2f%% valid", percentage_valid
-                                )
-                                continue
-
-                            ret = qbit_client.torrents_add(
-                                torrent_files=[torrent_file_path],
-                                save_path=str(torrent["save_path"]),
-                                is_skip_checking=False,
-                                use_auto_torrent_management=False,
-                                use_download_path=False,
-                            )
-
-                            if ret != "Ok.":
-                                logger.error("Qbittorrent failed(?) to add torrents, ret: %s", ret)
-                    except gazelle_api.Tracker.StatusError:
-                        time.sleep(15)
-
-            except requests.exceptions.ConnectionError as e:
-                logger.error("exception: %s", e)
-                time.sleep(15)
+        try:
+            if is_cross_seeded(torrent):
+                logger.info("already cross-seeded, skip")
                 continue
+            time.sleep(5)
+            infohash = str(torrent["hash"])
+            content_path = str(torrent["content_path"])
+            if qbit_config.prefix_mapping:
+                content_path = content_path.replace(
+                    qbit_config.prefix_mapping.remote, qbit_config.prefix_mapping.host
+                )
+            logger.info("Torrent files at %s", content_path)
+            src_details = src_catalog.tracker.get_torrent_details(infohash=infohash)
+
+            album = Album(
+                artist=src_details.group.music_info["artists"][0]["name"],
+                name=src_details.group.name,
+                year=src_details.group.year,
+            )
+            logger.info("Will search for the album: %s", album)
+            reference_list = Filelist(
+                folder_name=src_details.torrent.file_path, files=src_details.torrent.file_list
+            )
+            for catalog in dst_catalogs:
+                try:
+                    suggestions = catalog.search(album)
+                    for suggested_list in suggestions:
+                        dst_details: TorrentDetails = suggested_list.meta["details"]
+                        list_match = attempt_filelist_match(
+                            album,
+                            suggested_list,
+                            reference_list,
+                            suggested_folder=dst_details.torrent.file_path,
+                        )
+                        if list_match is None:
+                            continue
+                        if list_match.suggested_folder != list_match.reference_list.folder_name:
+                            logger.warning(
+                                "Renamed folder: '%s' != '%s'",
+                                list_match.suggested_folder,
+                                list_match.reference_list.folder_name,
+                            )
+                            continue
+
+                        if list_match.overall_similarity() != 100:
+                            print(format_match(list_match))
+                            logger.warning("Something different, skip")
+                            continue
+
+                        logger.info("Found match for %s", album)
+
+                        suggested_list = catalog.fill_meta(suggested_list)
+                        dst_details: TorrentDetails = suggested_list.meta["details"]
+
+                        if (dst_details.torrent.info_hash is not None) and (
+                            dst_details.torrent.info_hash.upper() in existing_torrent_map.keys()
+                        ):
+                            logger.info("Already exists in client, continue")
+                            continue
+
+                        if is_torrent_file_already_downloaded(catalog, dst_details):
+                            logger.info("Torrent file already downloaded, skip")
+                            continue
+
+                        try:
+                            torrent_file_path = get_torrent_file_path(catalog, dst_details)
+                        except Exception:
+                            time.sleep(15)
+                            continue
+
+                        percentage_valid, size = verify_torrent(torrent_file_path, content_path)
+                        if percentage_valid < 100:
+                            logger.warning(
+                                "Torrent content mismatch: %.2f%% valid", percentage_valid
+                            )
+                            continue
+
+                        ret = qbit_client.torrents_add(
+                            torrent_files=[torrent_file_path],
+                            save_path=str(torrent["save_path"]),
+                            is_skip_checking=False,
+                            use_auto_torrent_management=False,
+                            use_download_path=False,
+                        )
+
+                        if ret != "Ok.":
+                            logger.error("Qbittorrent failed(?) to add torrents, ret: %s", ret)
+                except gazelle_api.Tracker.StatusError:
+                    time.sleep(15)
+
+        except requests.exceptions.ConnectionError as e:
+            logger.error("exception: %s", e)
+            time.sleep(15)
+            continue
 
 
 def is_torrent_file_already_downloaded(catalog: GazelleCatalog, t: TorrentDetails) -> bool:
