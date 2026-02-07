@@ -1,6 +1,7 @@
 import html
 import re
 from typing import Annotated, Optional
+from os import path
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -9,7 +10,12 @@ from pydantic.alias_generators import to_camel
 class FilelistEntry(BaseModel):
     name: str
     size: int
-    meta: dict = dict()  # python typing at its strictest. it could be typing.Any
+    meta: dict = dict()  # python typing at its strictest.
+
+    def __init__(self, name: str, size: int, meta: dict = dict()):
+        self.name = path.normpath(name)
+        self.size = size
+        self.meta = meta
 
 
 class Filelist(BaseModel):

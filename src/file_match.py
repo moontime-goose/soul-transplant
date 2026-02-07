@@ -155,7 +155,7 @@ def attempt_filelist_match(
     # Filter out multi-cd albums with per-cd folders - nested folder download is
     # not supported by slskd, and this script does not handle this
     if any(
-        os.path.dirname(entry.suggested.name) != common_path
+        os.path.normpath(os.path.dirname(entry.suggested.name)) != os.path.normpath(common_path)
         for entry in file_matches
         if entry.suggested
     ):
@@ -167,7 +167,7 @@ def attempt_filelist_match(
     extra_files = [
         ref_entry
         for ref_entry in reference_list.files
-        if ref_entry not in music_files and "/" not in ref_entry.name
+        if ref_entry not in music_files and path.sep not in ref_entry.name
     ]
     common_folder_entries = [
         entry for entry in suggestion_list.files if entry.name.startswith(common_path)
@@ -191,7 +191,8 @@ def attempt_filelist_match(
     folder_extra_file_names: list[FilelistEntry] = [
         entry
         for entry in suggestion_list.files
-        if os.path.dirname(entry.name) == common_path and entry not in download_music_info
+        if os.path.normpath(os.path.dirname(entry.name)) == os.path.normpath(common_path)
+        and entry not in download_music_info
     ]
 
     for entry in folder_extra_file_names:
