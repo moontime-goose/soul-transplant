@@ -216,7 +216,7 @@ class SlskdApi(FileSupplier):
 def parse_slskd_response(response: dict) -> Filelist:
     files = [
         FilelistEntry(
-            name=entry["filename"].replace("\\", "/"),
+            name=entry["filename"].replace("\\", path.sep),
             size=entry["size"],
             meta={"file": entry},
         )
