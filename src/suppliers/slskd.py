@@ -107,19 +107,22 @@ class SlskdApi(FileSupplier):
 
         return iter(responses)
 
-    @sleep_and_retry("slskd", log_level=logging.INFO, min_logged_sleep_sec=2)
-    @limits(calls=1, period=5)
     def enqueue_download(self, filelist: Filelist) -> tuple[FileSupplier.DownloadStatus, Any]:
-        slskd_filelist = [f.meta["file"] for f in filelist.files]
-        with self.lock:
-            responses = [self.slskd.transfers.enqueue(filelist.meta["username"], slskd_filelist)]
-        all_succeeded = all(responses)
-        status = (
-            FileSupplier.DownloadStatus.SCHEDULED
-            if all_succeeded
-            else FileSupplier.DownloadStatus.FAILED
-        )
-        return (status, all_succeeded)
+        @sleep_and_retry("slskd", log_level=logging.INFO, min_logged_sleep_sec=2)
+        @limits(calls=1, period=5)
+        def enqueue_inner():
+            slskd_filelist = [f.meta["file"] for f in filelist.files]
+            with self.lock:
+                responses = [self.slskd.transfers.enqueue(filelist.meta["username"], slskd_filelist)]
+            all_succeeded = all(responses)
+            status = (
+                FileSupplier.DownloadStatus.SCHEDULED
+                if all_succeeded
+                else FileSupplier.DownloadStatus.FAILED
+            )
+            return (status, all_succeeded)
+
+        return enqueue_inner()
 
     def is_downloadable(self, folder_match: FilelistMatch) -> bool:
         # Sanity check - slskd does not allow specifying download path, so
