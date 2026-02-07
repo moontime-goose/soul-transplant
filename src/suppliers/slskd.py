@@ -51,7 +51,7 @@ class SlskdApi(FileSupplier):
         MAX_SLEEP_MS = 10000
         CHECK_INTERVAL_MS = 100
 
-        search_info = self.search(search_str, timeout_ms=10000)
+        search_info = self.search(search_str, timeout_ms=8000)
         search_id = search_info["id"]
 
         state = {"state": "InProgress"}
