@@ -6,6 +6,7 @@ import os
 import signal
 import sys
 import time
+import traceback
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
@@ -213,6 +214,10 @@ def main():
             except SearchFailedException:
                 logger.warning("%s: search failed, skip", album)
                 time.sleep(5)
+            except Exception as e:
+                logger.warning("Unexpected error while searching album: %s", e)
+                logger.warning("Stacktrace:\n%s", "".join(traceback.format_exception(type(e), e, e.__traceback__)))
+
 
         print("\n")
 
