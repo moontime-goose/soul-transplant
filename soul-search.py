@@ -164,10 +164,12 @@ def main():
         reduce(lambda l1, l2: l1 + l2, torrents_by_tracker.values()), "Tracking down files"
     ):
         infohash = torrent["hash"]
-        file_paths = [
-            os.path.join(str(torrent["save_path"]).replace("/data/", "/mnt/media_nfs/"), f.name)
-            for f in torrent.files
-        ]
+        save_path = str(torrent["save_path"])
+        if qbit_config.prefix_mapping:
+            save_path = save_path.replace(
+                qbit_config.prefix_mapping.remote, qbit_config.prefix_mapping.host
+            )
+        file_paths = [os.path.join(save_path, f.name) for f in torrent.files]
         inodes = [os.stat(path).st_ino for path in file_paths]
         torrent_file_map[infohash].extend(inodes)
         for ino in inodes:
