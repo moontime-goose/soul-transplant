@@ -100,4 +100,4 @@ def reject_if_torrent_exists(config: Config, filelists: Iterable[Filelist]) -> I
         _qbit_cache = QbitCache(config)
 
     assert _qbit_cache is not None
-    return filter(lambda fl: not _qbit_cache.torrent_exists(fl), filelists)
+    return filter(lambda fl: _qbit_cache and not _qbit_cache.torrent_exists(fl), filelists)
