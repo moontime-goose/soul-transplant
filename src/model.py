@@ -12,10 +12,8 @@ class FilelistEntry(BaseModel):
     size: int
     meta: dict = dict()  # python typing at its strictest.
 
-    def __init__(self, name: str, size: int, meta: dict = dict()):
-        self.name = path.normpath(name)
-        self.size = size
-        self.meta = meta
+    def __init__(self, name: str, size: int, meta: dict = dict()):                                                  
+        super().__init__(name=path.normpath(name), size=size, meta=meta)   
 
 
 class Filelist(BaseModel):
