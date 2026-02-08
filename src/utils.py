@@ -36,20 +36,23 @@ def prompt_yes_no(
 
 
 def config_path(path) -> str:
-    """Return path to a file in application config folder."""
-    ensure_directory_exists(xdg_config_home())
-    return os.path.join(xdg_config_home(), "soul-transplant", path)
+    """Return path to a file in application config folder, creating base folders as needed. """
+    ret =  os.path.join(xdg_config_home(), "soul-transplant", path)
+    ensure_directory_exists(os.path.dirname(ret))
+    return ret
 
 
 def cache_path(path) -> str:
-    """Return path to a file in application cache folder."""
-    ensure_directory_exists(xdg_cache_home())
-    return os.path.join(xdg_cache_home(), "soul-transplant", path)
+    """Return path to a file in application cache folder, creating base folders as needed."""
+    ret = os.path.join(xdg_cache_home(), "soul-transplant", path)
+    ensure_directory_exists(os.path.dirname(ret))
+    return ret
 
 
 def ensure_directory_exists(path):
     """Ensure directory exists, creating it if necessary."""
     os.makedirs(path, exist_ok=True)
+    return path
 
 
 class SleepAndRetryDecorator(object):
