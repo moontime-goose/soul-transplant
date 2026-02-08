@@ -6,10 +6,10 @@ from typing import List, Optional
 
 import yaml
 from pydantic import BaseModel, Field, HttpUrl
-from xdg_base_dirs import xdg_config_home
 from yaml.parser import ParserError
 
 import src.app as app
+from src.utils import config_path
 
 logger = logging.getLogger(app.LIB_LOGGER_NAME)
 
@@ -110,7 +110,7 @@ def find_config(suggested_path: Optional[os.PathLike]) -> os.PathLike:
             script_dir = path.dirname(path.abspath(sys.argv[0]))
             return [
                 path.join(script_dir, "config.yaml"),  # Script dir
-                xdg_config_home() / "soul-transplant/config.yaml",  # XDG config dir
+                config_path("config.yaml"), # XDG config dir
             ]
 
     paths = lookup_paths(suggested_path)

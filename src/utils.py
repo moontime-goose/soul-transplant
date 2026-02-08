@@ -6,10 +6,9 @@ from functools import wraps
 from ratelimit import RateLimitException
 from rich.progress import track
 from rich.prompt import Confirm
-from xdg_base_dirs import xdg_cache_home, xdg_config_home
+from platformdirs import user_cache_dir, user_config_dir
 
 from src.app import LIB_LOGGER_NAME
-from src.soul_config import Config
 
 logger = logging.getLogger(LIB_LOGGER_NAME)
 
@@ -19,7 +18,7 @@ def flatten(xss):
 
 
 def prompt_yes_no(
-    config: Config, prompt: str, default=False, force_user=False, log_auto=None
+    config, prompt: str, default=False, force_user=False, log_auto=None
 ) -> bool:
     """
     Wrapper around click.confirm to account for user provided settings, like
@@ -37,14 +36,16 @@ def prompt_yes_no(
 
 def config_path(path) -> str:
     """Return path to a file in application config folder, creating base folders as needed. """
-    ret =  os.path.join(xdg_config_home(), "soul-transplant", path)
+    config_dir = user_config_dir("soul-transplant", ensure_exists=True)
+    ret =  os.path.join(config_dir, path)
     ensure_directory_exists(os.path.dirname(ret))
     return ret
 
 
 def cache_path(path) -> str:
     """Return path to a file in application cache folder, creating base folders as needed."""
-    ret = os.path.join(xdg_cache_home(), "soul-transplant", path)
+    cache_dir = user_cache_dir("soul-transplant", ensure_exists=True)
+    ret =  os.path.join(cache_dir, path)
     ensure_directory_exists(os.path.dirname(ret))
     return ret
 
@@ -91,7 +92,7 @@ def to_percentage(x: float) -> int:
     return int(round(x * 100))
 
 
-def maybe_progress_bar(iterable, config: Config, **kwargs):
+def maybe_progress_bar(iterable, config, **kwargs):
     if config.unattended:
         return track(iterable, **kwargs)
     else:
